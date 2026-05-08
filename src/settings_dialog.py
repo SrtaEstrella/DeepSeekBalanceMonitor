@@ -239,13 +239,4 @@ def open_settings(app):
             log("Settings saved")
             _cleanup()
 
-        ttk.Button(btn_frame, text=T("save", lang), command=on_save).pack(
-            side="right", padx=(5, 0))
-        ttk.Button(btn_frame, text=T("cancel", lang), command=_cleanup).pack(
-            side="right")
-        root.bind("<Return>", lambda e: on_save())
-        root.bind("<Escape>", lambda e: _cleanup())
-        api_entry.focus_set()
-        root.mainloop()
-
-    _dialog()
+        ttk.Button(btn_frame, text=T("save",
