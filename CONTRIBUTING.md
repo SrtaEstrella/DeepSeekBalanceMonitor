@@ -1,9 +1,5 @@
 # Contributing — Port Sync Guide
 
-> 不同步 git，给社区移植者参考。
-
----
-
 ## Config Schema (v1.1)
 
 移植版本必须兼容以下 `config.json` 字段。未知字段应保留不删，忽略即可。
