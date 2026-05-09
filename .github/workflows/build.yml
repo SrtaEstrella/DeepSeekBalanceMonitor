@@ -7,6 +7,8 @@ on:
 jobs:
   release:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -30,6 +32,12 @@ jobs:
             main.py
 
       - name: Upload to Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: dist/DeepSeekBalanceMonitor.exe
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:GITHUB_REF_NAME dist/DeepSeekBalanceMonitor.exe --clobber --repo $env:GITHUB_REPOSITORY
+          } else {
+            gh release create $env:GITHUB_REF_NAME dist/DeepSeekBalanceMonitor.exe --title $env:GITHUB_REF_NAME --notes "Python build." --repo $env:GITHUB_REPOSITORY
+          }
