@@ -178,7 +178,7 @@ def open_settings(app):
                         variable=auto_start_var).pack(anchor="w", pady=(0, 2))
 
         ttk.Separator(scroll_frame, orient="horizontal").pack(fill="x", pady=(12, 8))
-        ttk.Label(scroll_frame, text="V1.0_260508",
+        ttk.Label(scroll_frame, text="V1.0.1_260508",
                   foreground="gray").pack(anchor="w")
         ttk.Label(scroll_frame, text="GitHub @SrtaEstrella  |  RedNote @Estella_han",
                   foreground="gray").pack(anchor="w", pady=(2, 0))

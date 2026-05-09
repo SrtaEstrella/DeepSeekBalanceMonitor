@@ -4,13 +4,11 @@ A Windows system tray application that periodically queries the DeepSeek API for
 
 一个 Windows 系统托盘应用，定时查询 DeepSeek API 账户余额，以动态图标形式显示在任务栏，余额过低时弹窗提醒。
 
+![preview](preview.png)
+
 ---
 
 ## English
-
-### Screenshot
-
-![Taskbar preview](preview_taskbar.png)
 
 ### Features
 
@@ -35,12 +33,13 @@ A Windows system tray application that periodically queries the DeepSeek API for
 > Balance is only 0.50, below your alert threshold of 1.00.
 > Please top up!
 
-### Requirements
+### Direct Download
 
-- Windows 10 or later
-- Python 3.10+
+Grab the latest `DeepSeekBalanceMonitor.exe` from [Releases](https://github.com/SrtaEstrella/DeepSeekBalanceMonitor/releases). No Python required — just double-click to run. On first launch you'll be prompted to enter your API key.
 
 ### Run from Source
+
+Requires Python 3.10+.
 
 ```bash
 pip install -r requirements.txt
@@ -51,12 +50,14 @@ On first launch the settings window opens automatically — enter your DeepSeek 
 
 ### Building the EXE
 
+Requires Python 3.10+ and PyInstaller.
+
 ```bash
 pip install pyinstaller
 scripts\build_exe.bat
 ```
 
-The script generates the static icon, builds a single-file `dist\DeepSeekBalanceMonitor.exe`, and launches it.
+Builds `dist\DeepSeekBalanceMonitor.exe` as a single-file executable.
 
 ### Project Structure
 
@@ -71,7 +72,7 @@ DeepSeekBalance/
 │   └── tray_app.py
 ├── scripts/                   # Build & utility scripts
 │   ├── generate_icon.py
-│   ├── test_api.py
+
 │   ├── build_exe.bat
 │   ├── setup.bat
 │   └── run_silent.vbs
@@ -122,10 +123,6 @@ MIT
 
 ## 中文
 
-### 截图
-
-![任务栏预览](preview_taskbar.png)
-
 ### 功能
 
 - **托盘图标显示余额** — 当前余额以数字形式显示在任务栏圆角矩形图标上。青色表示高于阈值，红色表示低于阈值或出错，灰色表示尚未完成首次查询。
@@ -149,12 +146,13 @@ MIT
 > 当前余额仅剩 0.50，已低于您设置的提醒阈值 1.00。
 > 请及时充值！
 
-### 运行要求
+### 直接下载
 
-- Windows 10 及以上
-- Python 3.10+
+从 [Releases](https://github.com/SrtaEstrella/DeepSeekBalanceMonitor/releases) 下载最新的 `DeepSeekBalanceMonitor.exe`，无需 Python 环境，双击即用。首次启动会提示输入 API Key。
 
 ### 源码运行
+
+需要 Python 3.10+。
 
 ```bash
 pip install -r requirements.txt
@@ -165,12 +163,14 @@ python main.py
 
 ### 构建 EXE
 
+需要 Python 3.10+ 和 PyInstaller。
+
 ```bash
 pip install pyinstaller
 scripts\build_exe.bat
 ```
 
-脚本会生成静态图标、构建单文件 `dist\DeepSeekBalanceMonitor.exe` 并自动启动。
+构建为单文件 `dist\DeepSeekBalanceMonitor.exe`。
 
 ### 项目结构
 
@@ -185,7 +185,7 @@ DeepSeekBalance/
 │   └── tray_app.py
 ├── scripts/                   # 构建与工具脚本
 │   ├── generate_icon.py
-│   ├── test_api.py
+
 │   ├── build_exe.bat
 │   ├── setup.bat
 │   └── run_silent.vbs
