@@ -12,19 +12,19 @@ A Windows system tray application that periodically queries the DeepSeek API for
 
 ### Features
 
-- **Tray icon with balance** — Your current balance is shown as a number on a coloured rounded rectangle in the taskbar. Teal when above threshold, red when low or errored, gray before the first check.
-- **Low balance notification** — A desktop notification fires when balance drops below your configured threshold. Alerts can be disabled in settings; the icon still turns red regardless.
-- **Balance details** — Left-click the icon (or right-click → View Balance) to see a full breakdown: total, topped-up, and granted balance per currency, plus last check time.
-- **Settings** — API key, check interval (1–1440 min), alert threshold, language (Chinese / English), and auto-start on boot — all in one dialog. Opens automatically on first launch if no key is configured.
+- **Tray icon with balance** — Balance shown as a number on a coloured rounded rectangle. Teal (OK), red (low balance), warm gray (API service degraded), gray (no data yet).
+- **Low balance notification** — Three modes: never, always, or once per drop (default). The icon turns red regardless.
+- **Balance details** — Left-click the icon to see balance, API service status, and last check time.
+- **Settings** — API key, check interval, alert threshold, alert mode, API status alerts, language, and auto-start on boot.
 
 #### Notification Previews
 
 **Normal balance view:**
 
-> DeepSeek Balance: 12.34 CNY
-> 
-> CNY: 12.34  (Topped 10.00, Granted 2.34)
+> DeepSeek Balance:
+> 12.34 CNY (Topped 10.00, Granted 2.34)
 > Last Check: 2026-05-08 14:30:00
+> DeepSeek API Status: 🟢 All Systems Operational
 
 **Low balance alert:**
 
@@ -72,7 +72,6 @@ DeepSeekBalance/
 │   └── tray_app.py
 ├── scripts/                   # Build & utility scripts
 │   ├── generate_icon.py
-
 │   ├── build_exe.bat
 │   ├── setup.bat
 │   └── run_silent.vbs
@@ -92,7 +91,7 @@ Settings are stored in `%APPDATA%\DeepSeek Balance Monitor\config.json`:
   "threshold_yuan": 1.0,
   "language": "zh",
   "auto_start": false,
-  "enable_alerts": true
+  "alert_mode": "always"
 }
 ```
 
@@ -104,6 +103,7 @@ Logs are written to `%APPDATA%\DeepSeek Balance Monitor\app.log`.
 |---|---|
 | View Balance | Left-click the icon, or Right-click → View Balance |
 | Check Now | Right-click → Check Now |
+| Top Up | Right-click → Top Up |
 | Settings | Right-click → Settings |
 | Quit | Right-click → Quit |
 
@@ -113,6 +113,7 @@ Logs are written to `%APPDATA%\DeepSeek Balance Monitor\app.log`.
 |---|---|
 | Teal | Balance is above the alert threshold |
 | Red | Balance is below threshold, or an API error occurred |
+| Warm gray | API service is degraded (balance data may be stale) |
 | Gray | First check not yet completed, or no API key configured |
 
 ### License
@@ -125,19 +126,19 @@ MIT
 
 ### 功能
 
-- **托盘图标显示余额** — 当前余额以数字形式显示在任务栏圆角矩形图标上。青色表示高于阈值，红色表示低于阈值或出错，灰色表示尚未完成首次查询。
-- **低余额通知** — 余额低于设定阈值时弹出桌面通知。可在设置中关闭通知，关闭后图标仍会变红作为视觉提醒。
-- **余额详情** — 左键单击图标（或右键 → 查看余额）可查看完整明细：每种币种的总余额、充值余额、赠送余额，以及上次查询时间。
-- **设置** — API Key、查询间隔（1–1440 分钟）、预警阈值、语言（中文 / English）、开机自启，集中在一个设置窗口中配置。首次启动若未配置 Key 会自动弹出。
+- **托盘图标显示余额** — 余额以数字形式显示在任务栏圆角图标上。青色（正常）、红色（低余额）、暖灰色（API 服务异常）、灰色（无数据）。
+- **低余额通知** — 三种模式：不提醒、持续提醒、仅提醒一次（默认）。图标仍会变红。
+- **余额详情** — 左键单击图标查看余额明细、API 服务状态和上次查询时间。
+- **设置** — API Key、查询间隔、预警阈值、提醒模式、API 状态提醒、语言、开机自启。
 
 #### 通知预览
 
 **查看余额：**
 
-> DeepSeek 余额: 12.34 CNY
-> 
-> CNY: 12.34  (充值 10.00, 赠送 2.34)
+> DeepSeek 余额：
+> 12.34 CNY（充值 10.00，赠送 2.34）
 > 上次查询: 2026-05-08 14:30:00
+> DeepSeek API 服务状态：🟢 服务正常
 
 **低余额告警：**
 
@@ -185,7 +186,6 @@ DeepSeekBalance/
 │   └── tray_app.py
 ├── scripts/                   # 构建与工具脚本
 │   ├── generate_icon.py
-
 │   ├── build_exe.bat
 │   ├── setup.bat
 │   └── run_silent.vbs
@@ -205,7 +205,7 @@ DeepSeekBalance/
   "threshold_yuan": 1.0,
   "language": "zh",
   "auto_start": false,
-  "enable_alerts": true
+  "alert_mode": "always"
 }
 ```
 
@@ -217,6 +217,7 @@ DeepSeekBalance/
 |---|---|
 | 查看余额 | 左键单击图标，或右键 → 查看余额 |
 | 立即查询 | 右键 → 立即查询 |
+| 充值 | 右键 → 充值 |
 | 设置 | 右键 → 设置 |
 | 退出 | 右键 → 退出 |
 
@@ -226,6 +227,7 @@ DeepSeekBalance/
 |---|---|
 | 青色 | 余额高于预警阈值 |
 | 红色 | 余额低于阈值，或 API 查询出错 |
+| 暖灰 | API 服务异常（余额数据可能已过时） |
 | 灰色 | 尚未完成首次查询，或未配置 Key |
 
 ### 协议

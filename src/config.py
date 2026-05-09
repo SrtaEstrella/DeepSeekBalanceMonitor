@@ -29,14 +29,16 @@ APP_ID   = "deepseek-balance-monitor"
 CONFIG_DIR = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / APP_NAME
 CONFIG_FILE = CONFIG_DIR / "config.json"
 LOG_FILE    = CONFIG_DIR / "app.log"
+DB_FILE     = CONFIG_DIR / "balance_history.db"
 
 DEFAULT_CONFIG = {
     "api_key": "",
     "interval_minutes": 10,
     "threshold_yuan": 1.0,
     "language": "zh",
+    "alert_mode": "once",    # "never" | "always" | "once"
+    "api_alert_enabled": True,
     "auto_start": False,
-    "enable_alerts": True,
 }
 
 # ─── i18n ─────────────────────────────────────────────────────────
@@ -48,7 +50,8 @@ _T = {
         "error_no_key":     "未配置 API Key",
         "view_balance":     "📋 查看余额",
         "check_now":        "🔄 立即查询",
-        "settings":         "⚙  设置…",
+        "top_up":           "💰 充值",
+        "settings":         "⚙️ 设置…",
         "quit":             "❌ 退出",
         "settings_title":   "DeepSeek Balance Monitor — 设置",
         "api_key_label":    "DeepSeek API Key:",
@@ -65,17 +68,31 @@ _T = {
         "exit_no_key":      "请在下次启动时配置 API Key。程序退出。",
         "low_bal_title":    "⚠ DeepSeek 余额不足",
         "low_bal_msg":      "当前余额仅剩 {balance}，已低于您设置的提醒阈值 {threshold}。\n请及时充值！",
-        "bal_error_title":  "DeepSeek 余额 — 错误",
-        "bal_empty_title":  "DeepSeek 余额",
+        "api_degraded_title": "⚠️ DeepSeek API 服务异常",
+        "api_degraded_msg":   "检测到 API 服务状态异常，可能影响余额查询和正常调用。",
+        "api_recovered_title": "✅ DeepSeek API 服务恢复",
+        "api_recovered_msg":   "API 服务已恢复正常。",
         "bal_empty_msg":    "尚未查询到余额，请稍后或点击「立即查询」",
-        "bal_title":        "DeepSeek 余额: {balance}",
+        "bal_title":        "DeepSeek 余额：",
+        "bal_line":         "{balance} {code}（充值 {topped}，赠送 {granted}）",
         "tooltip_balance":  "总余额: {total} {code}",
         "tooltip_error":    "错误: {error}",
         "tooltip_checking": "查询中…",
         "bal_error_msg":    "查询出错: {error}",
-        "bal_currency_line": "{code}: {total}  (充值 {topped}, 赠送 {granted})",
+
+        "status_none":        "服务正常",
+        "status_minor":       "轻微异常",
+        "status_major":       "严重异常",
+        "status_critical":    "关键不可用",
+        "status_maintenance": "维护中",
+        "status_unknown":     "服务状态未知",
+        "service_status":     "DeepSeek API 服务状态：",
+        "api_alert_label":    "API 服务状态变化提醒",
         "auto_start_label": "开机自动启动",
-        "enable_alerts_label": "开启预警提醒",
+        "alert_mode_label": "低余额提醒：",
+        "alert_mode_never":  "不提醒",
+        "alert_mode_always": "持续提醒",
+        "alert_mode_once":   "仅提醒一次",
     },
     "en": {
         "total_balance":    "Total Balance",
@@ -84,7 +101,8 @@ _T = {
         "error_no_key":     "No API Key configured",
         "view_balance":     "📋 View Balance",
         "check_now":        "🔄 Check Now",
-        "settings":         "⚙  Settings…",
+        "top_up":           "💰 Top Up",
+        "settings":         "⚙️ Settings…",
         "quit":             "❌ Quit",
         "settings_title":   "DeepSeek Balance Monitor — Settings",
         "api_key_label":    "DeepSeek API Key:",
@@ -101,17 +119,31 @@ _T = {
         "exit_no_key":      "Please configure an API Key on next launch. Exiting.",
         "low_bal_title":    "⚠ DeepSeek Low Balance",
         "low_bal_msg":      "Balance is only {balance}, below your alert threshold of {threshold}.\nPlease top up!",
-        "bal_error_title":  "DeepSeek Balance — Error",
-        "bal_empty_title":  "DeepSeek Balance",
+        "api_degraded_title": "⚠️ DeepSeek API Degraded",
+        "api_degraded_msg":   "API service status has changed — balance queries and normal usage may be affected.",
+        "api_recovered_title": "✅ DeepSeek API Recovered",
+        "api_recovered_msg":   "API service is back to normal.",
         "bal_empty_msg":    "No balance data yet. Please wait or click 'Check Now'.",
-        "bal_title":        "DeepSeek Balance: {balance}",
+        "bal_title":        "DeepSeek Balance:",
+        "bal_line":         "{balance} {code} (Topped {topped}, Granted {granted})",
         "tooltip_balance":  "Balance: {total} {code}",
         "tooltip_error":    "Error: {error}",
         "tooltip_checking": "Checking…",
         "bal_error_msg":    "Fetch error: {error}",
-        "bal_currency_line": "{code}: {total}  (Topped {topped}, Granted {granted})",
+
+        "status_none":        "All Systems Operational",
+        "status_minor":       "Minor Outage",
+        "status_major":       "Major Outage",
+        "status_critical":    "Critical Outage",
+        "status_maintenance": "Under Maintenance",
+        "status_unknown":     "Status Unknown",
+        "service_status":     "DeepSeek API Status:",
+        "api_alert_label":    "API service status alerts",
         "auto_start_label": "Auto-start on boot",
-        "enable_alerts_label": "Enable balance alerts",
+        "alert_mode_label": "Low Balance Alert:",
+        "alert_mode_never":  "Never",
+        "alert_mode_always": "Always",
+        "alert_mode_once":   "Once",
     },
 }
 
@@ -137,13 +169,20 @@ def load_config() -> dict:
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                return {**DEFAULT_CONFIG, **json.load(f)}
+                cfg = {**DEFAULT_CONFIG, **json.load(f)}
+            # Migrate legacy enable_alerts boolean → alert_mode string
+            if "enable_alerts" in cfg:
+                if "alert_mode" not in cfg or cfg["alert_mode"] == DEFAULT_CONFIG["alert_mode"]:
+                    cfg["alert_mode"] = "always" if cfg["enable_alerts"] else "never"
+                del cfg["enable_alerts"]
+            return cfg
         except Exception as e:
             log(f"Failed to load config: {e}")
     return DEFAULT_CONFIG.copy()
 
 def save_config(config: dict) -> None:
     try:
+        config.pop("enable_alerts", None)  # discard legacy key
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)

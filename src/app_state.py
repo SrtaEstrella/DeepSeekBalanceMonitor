@@ -14,11 +14,14 @@ class AppState:
         self.balances = {}
         self.last_check = None
         self.error = None
+        self.service_status = None
         self._timer = None
         self.running = True
         self._lock = threading.Lock()
         self._settings_open = False
         self._settings_window = None
+        self._alert_suppressed = False
+        self._api_was_operational = True
 
     @property
     def lang(self):
@@ -47,6 +50,44 @@ class AppState:
                 return False
             t = float(self.config.get("threshold_yuan", 1.0))
             return b["total_balance"] < t
+
+    def should_alert(self):
+        """Return True if a low-balance notification should fire this cycle."""
+        with self._lock:
+            mode = self.config.get("alert_mode", "always")
+            if mode == "never":
+                self._alert_suppressed = False
+                return False
+            b = self.get_preferred_balance()
+            if b is None:
+                return False
+            t = float(self.config.get("threshold_yuan", 1.0))
+            low = b["total_balance"] < t
+            if not low:
+                self._alert_suppressed = False
+                return False
+            if mode == "always":
+                return True
+            if self._alert_suppressed:
+                return False
+            self._alert_suppressed = True
+            return True
+
+    def check_api_status_alert(self):
+        """Return "degraded", "recovered", or None on first status change.
+        Fires once per transition — only when the API operational flag flips."""
+        with self._lock:
+            st = self.service_status
+            if st is None:
+                return None
+            now_ok = st.get("api_operational", True)
+            was_ok = self._api_was_operational
+            self._api_was_operational = now_ok
+            if was_ok and not now_ok:
+                return "degraded"
+            if not was_ok and now_ok:
+                return "recovered"
+            return None
 
     def schedule_next_check(self, cb, interval_sec):
         with self._lock:

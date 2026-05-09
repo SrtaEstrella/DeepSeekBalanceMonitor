@@ -1,13 +1,26 @@
 """
 DeepSeek API client — fetches account balance from the DeepSeek API.
 """
-import requests
+import json
+import urllib.request
+import urllib.error
+
+
+def _get_json(url, headers=None, timeout=15):
+    """GET a JSON endpoint. Returns parsed dict, or raises HTTPError on
+    4xx/5xx, URLError on network failure."""
+    req = urllib.request.Request(url, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = resp.read().decode("utf-8")
+        if resp.status >= 400:
+            raise urllib.error.HTTPError(url, resp.status, "", resp.headers, None)
+        return json.loads(body)
 
 
 def fetch_balance(api_key: str) -> dict:
     """Query balance. Returns dict with 'is_available' and 'all_balances'.
 
-    Raises PermissionError on 401, requests.HTTPError on other HTTP errors,
+    Raises PermissionError on 401, URLError/HTTPError on other failures,
     ValueError if the response contains no balance_infos.
     """
     # HTTP headers must be Latin-1 (RFC 7230 §3.2).  Any character
@@ -17,11 +30,14 @@ def fetch_balance(api_key: str) -> dict:
 
     url = "https://api.deepseek.com/user/balance"
     headers = {"Accept": "application/json", "Authorization": f"Bearer {api_key}"}
-    resp = requests.get(url, headers=headers, timeout=15)
-    if resp.status_code == 401:
-        raise PermissionError("Invalid API Key (401 Unauthorized)")
-    resp.raise_for_status()
-    data = resp.json()
+
+    try:
+        data = _get_json(url, headers)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise PermissionError("Invalid API Key (401 Unauthorized)")
+        raise
+
     infos = data.get("balance_infos", [])
     if not infos:
         raise ValueError("No balance information in response")
@@ -37,3 +53,28 @@ def fetch_balance(api_key: str) -> dict:
         "is_available": data.get("is_available", True),
         "all_balances": all_balances,
     }
+
+
+def fetch_service_status():
+    """Fetch DeepSeek service status from status.deepseek.com.
+    Returns dict {"indicator": str, "api_operational": bool},
+    or None on failure.  The API component is checked specifically
+    — the overall indicator may report minor/major even when the
+    API itself is fine (e.g. website outage)."""
+    try:
+        headers = {"User-Agent": "DeepSeekBalanceMonitor/1.0"}
+        data = _get_json(
+            "https://status.deepseek.com/api/v2/status.json",
+            headers=headers, timeout=10)
+        indicator = data.get("status", {}).get("indicator", "none")
+        components = _get_json(
+            "https://status.deepseek.com/api/v2/components.json",
+            headers=headers, timeout=10)
+        api_operational = True
+        for comp in components.get("components", []):
+            if "api" in comp.get("name", "").lower():
+                api_operational = comp.get("status") == "operational"
+                break
+        return {"indicator": indicator, "api_operational": api_operational}
+    except Exception:
+        return None

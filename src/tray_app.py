@@ -3,14 +3,16 @@ Tray application — balance checking loop, notifications, tray menu, and entry 
 """
 import sys
 import threading
+import webbrowser
 from datetime import datetime
 
 import pystray
 
 from src.config import T, log, CONFIG_DIR, APP_NAME, APP_ID
-from src.api_client import fetch_balance
+from src.api_client import fetch_balance, fetch_service_status
 from src.icon_renderer import create_icon_image
 from src.app_state import AppState
+from src.storage import save_balance_record
 
 
 # pystray on Windows uses Shell_NotifyIconA whose NOTIFYICONDATA.szTip / szInfo
@@ -33,6 +35,13 @@ def _sanitise_error(text):
 # --- Balance Check --------------------------------------------------
 
 def do_balance_check(app: AppState):
+    try:
+        status = fetch_service_status()
+    except Exception:
+        status = None
+    with app._lock:
+        app.service_status = status
+
     api_key = app.config.get("api_key", "").strip()
     if not api_key:
         with app._lock:
@@ -48,21 +57,34 @@ def do_balance_check(app: AppState):
             b = app.get_preferred_balance()
             if b:
                 log(f"Balance OK: {b['total_balance']:.2f} {b['currency']}")
+            for code, bal in data["all_balances"].items():
+                save_balance_record(code, bal["total_balance"],
+                                    bal["topped_up_balance"],
+                                    bal["granted_balance"])
         except Exception as e:
-            # Only the exception text is risky — API error bodies may carry
-            # characters outside the system ANSI code page.
             raw = str(e).split("\n")[0]
-            with app._lock:
-                app.error = _sanitise_error(raw)
-                app.balances = {}
-            log(f"Check failed: {e}")
+            # If the API is known to be degraded, a failed balance
+            # check is expected — keep the previous data in place.
+            api_degraded = status and not status.get("api_operational", True)
+            if api_degraded:
+                log(f"Balance check failed (API degraded, keeping previous data): {e}")
+            else:
+                with app._lock:
+                    app.error = _sanitise_error(raw)
+                    app.balances = {}
+                log(f"Check failed: {e}")
 
     if app.icon:
         app.icon.title = app.balance_tooltip()
         app.icon.icon = create_icon_image(app)
 
-    if app.is_low_balance() and app.config.get("enable_alerts", True):
+    if app.should_alert():
         notify_user(app)
+
+    if app.config.get("api_alert_enabled", True):
+        transition = app.check_api_status_alert()
+        if transition:
+            notify_api_status(app, transition)
 
     interval_sec = int(app.config.get("interval_minutes", 10)) * 60
     app.schedule_next_check(lambda: do_balance_check(app), interval_sec)
@@ -94,6 +116,22 @@ def notify_user(app: AppState):
             pass
 
 
+def notify_api_status(app: AppState, transition: str):
+    """Notify once when the API service status changes."""
+    lang = app.lang
+    if transition == "degraded":
+        title = T("api_degraded_title", lang)
+        msg = T("api_degraded_msg", lang)
+    else:
+        title = T("api_recovered_title", lang)
+        msg = T("api_recovered_msg", lang)
+    try:
+        app.icon.notify(msg, title=title)
+        log(f"API status notification: {transition}")
+    except Exception as e:
+        log(f"API status notify failed: {e}")
+
+
 # --- Tray Menu Actions ----------------------------------------------
 
 def on_show_balance(icon, item):
@@ -101,38 +139,48 @@ def on_show_balance(icon, item):
     if app is None:
         return
     lang = app.lang
+    _STATUS_ICON = {
+        "none": "🟢", "minor": "🟡", "major": "🟠",
+        "critical": "🔴", "maintenance": "🔵",
+    }
     with app._lock:
         balances = dict(app.balances)
         err = app.error
         last = app.last_check
+        raw_status = app.service_status
+        status_indicator = raw_status.get("indicator") if raw_status else None
+
+    status_key = f"status_{status_indicator}" if status_indicator else "status_unknown"
+    status_line = T("service_status", lang) + " " + _STATUS_ICON.get(status_indicator, "⚪") + " " + T(status_key, lang)
+
+    title = T("bal_title", lang)
+    lines = []
 
     if err:
-        title = T("bal_error_title", lang)
-        msg = T("bal_error_msg", lang, error=err)
+        lines.append(T("bal_error_msg", lang, error=err))
     elif not balances:
-        title = T("bal_empty_title", lang)
-        msg = T("bal_empty_msg", lang)
+        lines.append(T("bal_empty_msg", lang))
     else:
-        time_str = last.strftime("%Y-%m-%d %H:%M:%S") if last else "-"
-        lines = []
-        for code, b in balances.items():
-            lines.append(T("bal_currency_line", lang,
-                           code=code,
-                           total=f"{b['total_balance']:,.2f}",
-                           topped=f"{b['topped_up_balance']:,.2f}",
-                           granted=f"{b['granted_balance']:,.2f}"))
-        msg = "\n".join(lines)
-        if last:
-            msg += f"\n{T('last_check', lang)}: {time_str}"
-
         pb = app.get_preferred_balance()
         if pb:
-            title = T("bal_title", lang,
-                      balance=f"{pb['total_balance']:,.2f} {pb['currency']}")
+            lines.append(T("bal_line", lang,
+                           balance=f"{pb['total_balance']:,.2f}",
+                           code=pb["currency"],
+                           topped=f"{pb['topped_up_balance']:,.2f}",
+                           granted=f"{pb['granted_balance']:,.2f}"))
         else:
             first_code = next(iter(balances))
-            title = T("bal_title", lang,
-                      balance=f"{balances[first_code]['total_balance']:,.2f} {first_code}")
+            b = balances[first_code]
+            lines.append(T("bal_line", lang,
+                           balance=f"{b['total_balance']:,.2f}",
+                           code=first_code,
+                           topped=f"{b['topped_up_balance']:,.2f}",
+                           granted=f"{b['granted_balance']:,.2f}"))
+        time_str = last.strftime("%Y-%m-%d %H:%M:%S") if last else "-"
+        lines.append(T("last_check", lang) + ": " + time_str)
+
+    lines.append(status_line)
+    msg = "\n".join(lines)
 
     try:
         icon.notify(msg, title=title)
@@ -160,6 +208,11 @@ def on_settings(icon, item):
         log(f"Settings error: {e}")
 
 
+def on_top_up(icon, item):
+    webbrowser.open("https://platform.deepseek.com/top_up")
+    log("Top-up page opened")
+
+
 def on_quit(icon, item):
     app = getattr(icon, "_app", None)
     if app is None:
@@ -176,6 +229,7 @@ def make_menu(app: AppState):
     return pystray.Menu(
         pystray.MenuItem(T("view_balance", lang), on_show_balance, default=True),
         pystray.MenuItem(T("check_now", lang), on_check_now),
+        pystray.MenuItem(T("top_up", lang), on_top_up),
         pystray.MenuItem(T("settings", lang), on_settings),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(T("quit", lang), on_quit),

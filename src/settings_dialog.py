@@ -150,10 +150,22 @@ def open_settings(app):
         threshold_sb.pack(side="left")
         ttk.Label(tfr, text=T("threshold_hint", lang)).pack(side="left")
 
-        enable_alerts_var = tk.BooleanVar(
-            value=app.config.get("enable_alerts", True))
-        ttk.Checkbutton(scroll_frame, text=T("enable_alerts_label", lang),
-                        variable=enable_alerts_var).pack(anchor="w", pady=(6, 6))
+        ALERT_MODES = {"不提醒": "never", "持续提醒": "always", "仅提醒一次": "once"}
+        ALERT_MODES_EN = {"Never": "never", "Always": "always", "Once": "once"}
+        alert_mode_map = ALERT_MODES if lang == "zh" else ALERT_MODES_EN
+        alert_mode_display = list(alert_mode_map.keys())
+        cur_alert_display = {v: k for k, v in alert_mode_map.items()}.get(
+            app.config.get("alert_mode", "always"), "Always")
+        ttk.Label(scroll_frame, text=T("alert_mode_label", lang)).pack(anchor="w")
+        alert_mode_var = tk.StringVar(value=cur_alert_display)
+        alert_mode_combo = ttk.Combobox(scroll_frame, textvariable=alert_mode_var,
+                                        values=alert_mode_display, state="readonly", width=14)
+        alert_mode_combo.pack(anchor="w", pady=(0, 8))
+
+        api_alert_var = tk.BooleanVar(
+            value=app.config.get("api_alert_enabled", True))
+        ttk.Checkbutton(scroll_frame, text=T("api_alert_label", lang),
+                        variable=api_alert_var).pack(anchor="w", pady=(0, 8))
 
         ttk.Label(scroll_frame, text=T("language_label", lang)).pack(anchor="w", pady=(2, 0))
         LANG_OPTIONS = {"中文": "zh", "English": "en"}
@@ -168,7 +180,7 @@ def open_settings(app):
         # Prevent accidental value changes via mousewheel on spinboxes and
         # comboboxes — these are too easy to bump while scrolling the dialog.
         _no_scroll = lambda e: "break"
-        for w in (interval_sb, threshold_sb, lang_combo):
+        for w in (interval_sb, threshold_sb, alert_mode_combo, lang_combo):
             w.bind("<MouseWheel>", _no_scroll)
 
         from src.app_state import get_auto_start_state, set_auto_start
@@ -226,7 +238,8 @@ def open_settings(app):
             app.config["threshold_yuan"] = threshold_var.get()
             app.config["language"] = LANG_OPTIONS.get(lang_var.get(), "zh")
             app.config["auto_start"] = auto_start_var.get()
-            app.config["enable_alerts"] = enable_alerts_var.get()
+            app.config["alert_mode"] = alert_mode_map.get(alert_mode_var.get(), "always")
+            app.config["api_alert_enabled"] = api_alert_var.get()
             set_auto_start(app.config["auto_start"])
             save_config(app.config)
             app.cancel_timer()

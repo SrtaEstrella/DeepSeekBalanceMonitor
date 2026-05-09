@@ -5,10 +5,14 @@ from PIL import Image, ImageDraw, ImageFont
 
 from src.config import log
 
-_ICON_OK     = (60, 105, 102, 255)  # darker teal
+_ICON_OK     = (60, 105, 102, 255)  # teal
 _ICON_RED    = (185, 70, 60, 255)
 _ICON_GRAY   = (105, 105, 110, 255)
 _ICON_RADIUS = 12
+
+# Gray with a subtle warm tint — distinguishes "API degraded"
+# from "no data" at a glance while still reading as uncertain.
+_ICON_WARN   = (120, 105, 90, 255)
 
 
 def _draw_rounded_rect(draw, xy, radius, **kwargs):
@@ -39,6 +43,7 @@ def _create_icon_image_impl(app):
     with app._lock:
         err = app.error
         b = app.get_preferred_balance()
+        st = app.service_status
 
     if err:
         fill = _ICON_RED
@@ -48,7 +53,13 @@ def _create_icon_image_impl(app):
         label = "..."
     else:
         val = int(b["total_balance"])
-        fill = _ICON_RED if app.is_low_balance() else _ICON_OK
+        api_ok = st is None or st.get("api_operational", True)
+        if not api_ok:
+            fill = _ICON_WARN
+        elif app.is_low_balance():
+            fill = _ICON_RED
+        else:
+            fill = _ICON_OK
         label = str(val) if val <= 99 else "OK"
 
     margin = 0
