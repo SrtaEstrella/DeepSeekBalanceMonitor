@@ -16,6 +16,7 @@ A Windows system tray application that periodically queries the DeepSeek API for
 - **Low balance notification** — Three modes: never, always, or once per drop (default). The icon turns red regardless.
 - **Balance details** — Left-click the icon to see balance, API service status, and last check time.
 - **Settings** — API key, check interval, alert threshold, alert mode, API status alerts, language, and auto-start on boot.
+- **Rust Windows build** — Community-contributed native Rust build (`rust-windows/`). Smaller binary, Win7/Win8.1 support, bundled DeepSeek icon, startup-folder auto-start.
 
 #### Notification Previews
 
@@ -35,7 +36,12 @@ A Windows system tray application that periodically queries the DeepSeek API for
 
 ### Direct Download
 
-Grab the latest `DeepSeekBalanceMonitor.exe` from [Releases](https://github.com/SrtaEstrella/DeepSeekBalanceMonitor/releases). No Python required — just double-click to run. On first launch you'll be prompted to enter your API key.
+Grab the latest executable from [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases). Use `DeepSeekBalanceMonitor.exe` for the Python-packaged build or `deepseek-balance-monitor.exe` for the Rust Windows build. No Python is required for release executables.
+
+### Requirements
+
+- Python build: Windows 10 or later, Python 3.10+
+- Rust build: Windows 7 SP1 / Server 2008 R2 SP1 with all official updates, Windows 8.1 / Server 2012 R2, Windows 10, or Windows 11
 
 ### Run from Source
 
@@ -59,6 +65,30 @@ scripts\build_exe.bat
 
 Builds `dist\DeepSeekBalanceMonitor.exe` as a single-file executable.
 
+### Rust Windows Build
+
+The Rust port lives in `rust-windows/` and shares the same config and log files as the Python version. It is built with Rust `1.77.2` to keep the Windows 7/8.1 target viable.
+
+```powershell
+cd rust-windows
+rustup toolchain install 1.77.2-x86_64-pc-windows-msvc
+cargo +1.77.2 build --release --target x86_64-pc-windows-msvc --locked
+```
+
+GitHub Actions publishes the release executable as `deepseek-balance-monitor.exe` on `v0.1.1`.
+
+### Python vs Rust Build
+
+| Area | Python build | Rust Windows build |
+|---|---|---|
+| Runtime | Python + pystray + Tkinter | Native Rust + native-windows-gui |
+| Packaging | PyInstaller single exe | Cargo release exe via GitHub Actions |
+| Minimum target | Windows 10+ documented | Win7 SP1 / Win8.1+ target, real Windows test passed |
+| First launch without key | Opens settings dialog | Creates/opens `config.json` and shows a local-storage notice |
+| Auto-start | Registry Run key | Current-user Startup folder `.lnk`, no admin rights |
+| Icon | Generated `app_icon.ico`; dynamic tray balance icon | Bundled DeepSeek exe icon; dynamic tray balance icon |
+| Config path | `%APPDATA%\DeepSeek Balance Monitor\config.json` | Same path, compatible schema |
+
 ### Project Structure
 
 ```
@@ -75,6 +105,11 @@ DeepSeekBalance/
 │   ├── build_exe.bat
 │   ├── setup.bat
 │   └── run_silent.vbs
+├── rust-windows/              # Native Rust Windows port
+│   ├── src/main.rs
+│   ├── app.ico
+│   ├── app.manifest
+│   └── build.rs
 ├── main.py
 ├── requirements.txt
 └── README.md
@@ -95,7 +130,7 @@ Settings are stored in `%APPDATA%\DeepSeek Balance Monitor\config.json`:
 }
 ```
 
-Logs are written to `%APPDATA%\DeepSeek Balance Monitor\app.log`.
+Logs are written to `%APPDATA%\DeepSeek Balance Monitor\app.log`. The Rust build defaults `auto_start` to `true`; the original Python default is `false`. In the Rust build, auto-start creates or removes a shortcut at `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\DeepSeek Balance Monitor.lnk`.
 
 ### Tray Menu
 
@@ -130,6 +165,7 @@ MIT
 - **低余额通知** — 三种模式：不提醒、持续提醒、仅提醒一次（默认）。图标仍会变红。
 - **余额详情** — 左键单击图标查看余额明细、API 服务状态和上次查询时间。
 - **设置** — API Key、查询间隔、预警阈值、提醒模式、API 状态提醒、语言、开机自启。
+- **Rust Windows 版** — 社区贡献的原生 Rust 构建（`rust-windows/`）。体积更小，支持 Win7/Win8.1，自带 DeepSeek 图标。
 
 #### 通知预览
 
@@ -149,7 +185,12 @@ MIT
 
 ### 直接下载
 
-从 [Releases](https://github.com/SrtaEstrella/DeepSeekBalanceMonitor/releases) 下载最新的 `DeepSeekBalanceMonitor.exe`，无需 Python 环境，双击即用。首次启动会提示输入 API Key。
+从 [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases) 下载最新可执行文件。Python 打包版使用 `DeepSeekBalanceMonitor.exe`，Rust Windows 版使用 `deepseek-balance-monitor.exe`；发布版无需 Python 环境。
+
+### 运行要求
+
+- Python 版：Windows 10 及以上，Python 3.10+
+- Rust 版：安装所有官方更新的 Windows 7 SP1 / Server 2008 R2 SP1、Windows 8.1 / Server 2012 R2、Windows 10 或 Windows 11
 
 ### 源码运行
 
@@ -173,6 +214,30 @@ scripts\build_exe.bat
 
 构建为单文件 `dist\DeepSeekBalanceMonitor.exe`。
 
+### Rust Windows 构建
+
+Rust 版本位于 `rust-windows/`，与 Python 版共用配置和日志文件。工具链锁定 Rust `1.77.2`，用于保留 Windows 7/8.1 目标兼容性。
+
+```powershell
+cd rust-windows
+rustup toolchain install 1.77.2-x86_64-pc-windows-msvc
+cargo +1.77.2 build --release --target x86_64-pc-windows-msvc --locked
+```
+
+GitHub Actions 会在 `v0.1.1` 发布页上传 `deepseek-balance-monitor.exe`。
+
+### Python 版与 Rust 版对比
+
+| 项目 | Python 版 | Rust Windows 版 |
+|---|---|---|
+| 运行时 | Python + pystray + Tkinter | 原生 Rust + native-windows-gui |
+| 打包 | PyInstaller 单文件 exe | Cargo release exe，由 GitHub Actions 构建 |
+| 最低目标 | 文档标注 Windows 10+ | 目标支持 Win7 SP1 / Win8.1+，Windows 实机测试通过 |
+| 首次无 Key | 弹出设置窗口 | 创建/打开 `config.json`，并提示信息仅保存在本机 |
+| 开机自启 | 注册表 Run 键 | 当前用户启动文件夹 `.lnk`，无需管理员权限 |
+| 图标 | 生成 `app_icon.ico`；托盘图标动态显示余额 | 内置 DeepSeek exe 图标；托盘图标动态显示余额 |
+| 配置路径 | `%APPDATA%\DeepSeek Balance Monitor\config.json` | 相同路径，配置格式兼容 |
+
 ### 项目结构
 
 ```
@@ -189,6 +254,11 @@ DeepSeekBalance/
 │   ├── build_exe.bat
 │   ├── setup.bat
 │   └── run_silent.vbs
+├── rust-windows/              # 原生 Rust Windows 版
+│   ├── src/main.rs
+│   ├── app.ico
+│   ├── app.manifest
+│   └── build.rs
 ├── main.py
 ├── requirements.txt
 └── README.md
@@ -209,7 +279,7 @@ DeepSeekBalance/
 }
 ```
 
-日志路径：`%APPDATA%\DeepSeek Balance Monitor\app.log`
+日志路径：`%APPDATA%\DeepSeek Balance Monitor\app.log`。Rust 版 `auto_start` 默认值为 `true`；原 Python 版默认值为 `false`。Rust 版自启动会创建或删除 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\DeepSeek Balance Monitor.lnk`。
 
 ### 托盘菜单
 

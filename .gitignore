@@ -8,3 +8,10 @@ __pycache__/
 app_icon.ico
 DeepSeekBalanceMonitor.exe
 *.log
+
+# Rust local build output and cache
+target/
+**/target/
+.cargo/
+**/.cargo/
+*.rs.bk

@@ -1,0 +1,25 @@
+[package]
+name = "deepseek-balance-monitor"
+version = "0.1.1"
+edition = "2021"
+rust-version = "1.77.2"
+description = "Windows tray balance monitor for the DeepSeek API"
+license = "MIT"
+
+[target.'cfg(windows)'.dependencies]
+chrono = { version = "=0.4.38", default-features = false, features = ["clock", "std"] }
+image = { version = "=0.24.9", default-features = false, features = ["ico", "png"] }
+imageproc = "=0.23.0"
+native-windows-gui = "=1.0.13"
+reqwest = { version = "=0.11.27", default-features = false, features = ["blocking", "json", "native-tls"] }
+rusttype = "=0.9.3"
+serde = { version = "=1.0.197", features = ["derive"] }
+serde_json = "=1.0.114"
+
+# Keep the dependency graph parseable by Cargo 1.77.2 for Win7/8.1 builds.
+indexmap = "=2.2.6"
+native-tls = "=0.2.11"
+rayon = "=1.10.0"
+rayon-core = "=1.12.1"
+unicode-segmentation = "=1.11.0"
+url = "=2.5.0"
