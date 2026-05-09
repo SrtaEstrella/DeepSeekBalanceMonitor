@@ -1,0 +1,79 @@
+name: Rust Linux
+
+on:
+  push:
+    branches:
+      - "rust-linux"
+    tags:
+      - "v*"
+    paths:
+      - "rust-linux/**"
+      - ".github/workflows/rust-linux.yml"
+  pull_request:
+    paths:
+      - "rust-linux/**"
+      - ".github/workflows/rust-linux.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container: rockylinux:8
+    permissions:
+      contents: write
+
+    steps:
+      - name: Install build dependencies
+        run: dnf -y install binutils ca-certificates curl file gcc git gzip tar xz
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.77.2
+        working-directory: rust-linux
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.77.2 --component rustfmt
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Check formatting
+        working-directory: rust-linux
+        run: cargo +1.77.2 fmt --check
+
+      - name: Check Linux target
+        working-directory: rust-linux
+        run: cargo +1.77.2 check --locked
+
+      - name: Build release binary
+        working-directory: rust-linux
+        run: cargo +1.77.2 build --release --locked
+
+      - name: Check linked glibc symbols
+        working-directory: rust-linux
+        run: |
+          file target/release/dsmon
+          objdump -T target/release/dsmon | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1 || true
+
+      - name: Create tarball
+        working-directory: rust-linux
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          package="deepseek-balance-monitor-${version}-linux-x86_64"
+          mkdir -p "target/package/${package}"
+          cp target/release/dsmon "target/package/${package}/"
+          cp package/install.sh package/dsmon.service "target/package/${package}/"
+          cp -R plasmoid/package "target/package/${package}/plasmoid"
+          tar -czf "target/package/${package}.tar.gz" -C target/package "${package}"
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepseek-balance-monitor-linux-x86_64
+          path: rust-linux/target/package/*.tar.gz
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: rust-linux/target/package/*.tar.gz
+          body: Rust Linux CLI build.
+          overwrite_files: true

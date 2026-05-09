@@ -1,6 +1,6 @@
 # DeepSeek Balance Monitor
 
-A Windows system tray application that periodically queries the DeepSeek API for account balance, displays it as a dynamic tray icon, and alerts on low balance.
+A Windows tray app and Linux CLI/Plasma widget that periodically query the DeepSeek API for account balance and alert on low balance.
 
 [中文版](README_zh.md)
 
@@ -11,10 +11,11 @@ A Windows system tray application that periodically queries the DeepSeek API for
 ## Features
 
 - **Tray icon with balance** — Balance shown as a number on a coloured rounded rectangle. Teal (OK), red (low balance), warm gray (API service degraded), gray (no data yet).
-- **Low balance notification** — Three modes: never, always, or once per drop (default). The icon turns red regardless.
-- **Balance details** — Left-click the icon to see balance, API service status, and last check time.
+- **Low balance notification** — Three modes in the Python build: never, always, or once per drop (default). The icon turns red regardless.
+- **Balance details** — Left-click the Windows tray icon to see balance, API service status, and last check time.
 - **Settings** — API key, check interval, alert threshold, alert mode, API status alerts, language, and auto-start on boot.
-- **Rust Windows build** — Community-contributed native Rust build (`rust-windows/`). Smaller binary, Win7/Win8.1 support, startup-folder auto-start.
+- **Rust Windows build** — Native Rust build (`rust-windows/`) with Win7/Win8.1 support, bundled icon, and startup-folder auto-start.
+- **Rust Linux build** — `dsmon` CLI daemon (`rust-linux/`) with systemd user service support, log retention, and an optional KDE Plasma 6 widget.
 
 ### Notification Previews
 
@@ -35,12 +36,13 @@ A Windows system tray application that periodically queries the DeepSeek API for
 
 ### Direct Download
 
-Grab the latest executable from [Releases](https://github.com/SrtaEstrella/DeepSeekBalanceMonitor/releases). No Python required — just double-click to run. On first launch you'll be prompted to enter your API key.
+Grab the latest files from [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases). Use `DeepSeekBalanceMonitor.exe` for the Python-packaged build, `deepseek-balance-monitor.exe` for the Rust Windows build, or `deepseek-balance-monitor-*-linux-x86_64.tar.gz` for Linux. Release builds do not require Python.
 
 ### Requirements
 
 - Python build: Windows 10+, Python 3.10+
-- Rust build: Windows 7 SP1+, 8.1, 10, or 11
+- Rust Windows build: Windows 7 SP1 / Server 2008 R2 SP1 with all official updates, Windows 8.1 / Server 2012 R2, Windows 10, or Windows 11
+- Rust Linux build: RHEL 8 / Ubuntu 20.04 era glibc or newer; KDE Plasma 6.0+ for the optional widget
 
 ### Run from Source (Python)
 
@@ -62,7 +64,7 @@ scripts\build_exe.bat
 
 Builds `dist\DeepSeekBalanceMonitor.exe`. GitHub Actions auto-builds and attaches the EXE to each release.
 
-**Rust (`rust-windows/`):**
+**Rust Windows (`rust-windows/`):**
 
 ```powershell
 cd rust-windows
@@ -70,14 +72,29 @@ rustup toolchain install 1.77.2-x86_64-pc-windows-msvc
 cargo +1.77.2 build --release --target x86_64-pc-windows-msvc --locked
 ```
 
+**Rust Linux (`rust-linux/`):**
+
+```bash
+cd rust-linux
+cargo +1.77.2 build --release --locked
+```
+
+Release tarballs install `/usr/local/bin/dsmon`, `/etc/systemd/user/dsmon.service`, and, on Plasma 6 systems, the optional Plasma widget:
+
+```bash
+tar -xzf deepseek-balance-monitor-0.2.0-linux-x86_64.tar.gz
+cd deepseek-balance-monitor-0.2.0-linux-x86_64
+sudo ./install.sh
+```
+
 ### Python vs Rust
 
-| | Python | Rust |
-|---|---|---|
-| Runtime | Python + pystray + Tkinter | Native Rust |
-| Min OS | Windows 10+ | Windows 7 SP1+ |
-| First launch (no key) | Opens settings dialog | Opens `config.json` in editor |
-| Auto-start | Registry Run key | Startup folder shortcut |
+| | Python | Rust Windows | Rust Linux |
+|---|---|---|---|
+| Runtime | Python + pystray + Tkinter | Native Rust + native-windows-gui | Native Rust CLI |
+| Min OS | Windows 10+ | Windows 7 SP1+ | RHEL 8 / Ubuntu 20.04 era glibc |
+| First launch (no key) | Opens settings dialog | Opens `config.json` in editor | Prints config path and creates config |
+| Auto-start | Registry Run key | Startup folder shortcut | systemd user service |
 
 ## Project Structure
 
@@ -99,6 +116,10 @@ DeepSeekBalance/
 │   ├── app.ico
 │   ├── app.manifest
 │   └── build.rs
+├── rust-linux/                # Rust Linux CLI and Plasma 6 widget
+│   ├── src/main.rs
+│   ├── package/
+│   └── plasmoid/
 ├── main.py
 ├── requirements.txt
 └── README.md
@@ -106,7 +127,7 @@ DeepSeekBalance/
 
 ## Configuration
 
-Settings are stored in `%APPDATA%\DeepSeek Balance Monitor\config.json`:
+Windows builds store settings in `%APPDATA%\DeepSeek Balance Monitor\config.json`:
 
 ```json
 {
@@ -121,7 +142,9 @@ Settings are stored in `%APPDATA%\DeepSeek Balance Monitor\config.json`:
 }
 ```
 
-Logs are written to `%APPDATA%\DeepSeek Balance Monitor\app.log`.
+Linux `dsmon` stores settings in `~/.config/deepseek-balance-monitor/config.json` and logs in `~/.local/state/deepseek-balance-monitor/app.log`.
+
+Windows logs are written to `%APPDATA%\DeepSeek Balance Monitor\app.log`.
 
 ## Tray Menu
 

@@ -1,0 +1,19 @@
+{
+  "KPackageStructure": "Plasma/Applet",
+  "KPlugin": {
+    "Authors": [
+      {
+        "Name": "DeepSeek Balance Monitor Contributors"
+      }
+    ],
+    "Category": "System Information",
+    "Description": "DeepSeek balance monitor for Plasma 6",
+    "Icon": "wallet-open",
+    "Id": "com.github.wenyinos.deepseek-balance-monitor",
+    "License": "MIT",
+    "Name": "DeepSeek Balance Monitor",
+    "Version": "0.2.0",
+    "Website": "https://github.com/wenyinos/DeepSeekBalanceMonitor"
+  },
+  "X-Plasma-API-Minimum-Version": "6.0"
+}

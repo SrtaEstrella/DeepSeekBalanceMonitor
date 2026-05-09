@@ -1,6 +1,6 @@
 # DeepSeek 余额监控
 
-一个 Windows 系统托盘应用，定时查询 DeepSeek API 账户余额，以动态图标形式显示在任务栏，余额过低时弹窗提醒。
+一个 Windows 系统托盘应用和 Linux 命令行 / Plasma 小组件，定时查询 DeepSeek API 账户余额，并在余额过低时提醒。
 
 [English](README.md)
 
@@ -14,7 +14,8 @@
 - **低余额通知** — 三种模式：不提醒、持续提醒、仅提醒一次（默认）。图标仍会变红。
 - **余额详情** — 左键单击图标查看余额明细、API 服务状态和上次查询时间。
 - **设置** — API Key、查询间隔、预警阈值、提醒模式、API 状态提醒、语言、开机自启。
-- **Rust Windows 版** — 社区贡献的原生 Rust 构建（`rust-windows/`）。体积更小，支持 Win7/Win8.1。
+- **Rust Windows 版** — 原生 Rust 构建（`rust-windows/`），支持 Win7/Win8.1，使用启动文件夹快捷方式实现开机自启。
+- **Rust Linux 版** — `dsmon` 命令行守护进程（`rust-linux/`），支持 systemd 用户服务、日志保留和可选 KDE Plasma 6 小组件。
 
 ### 通知预览
 
@@ -35,12 +36,13 @@
 
 ### 直接下载
 
-从 [Releases](https://github.com/SrtaEstrella/DeepSeekBalanceMonitor/releases) 下载最新可执行文件。无需 Python 环境，双击即用。首次启动会提示输入 API Key。
+从 [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases) 下载最新文件。Python 打包版使用 `DeepSeekBalanceMonitor.exe`，Rust Windows 版使用 `deepseek-balance-monitor.exe`，Linux 版使用 `deepseek-balance-monitor-*-linux-x86_64.tar.gz`。发布版无需 Python 环境。
 
 ### 运行要求
 
 - Python 版：Windows 10+，Python 3.10+
-- Rust 版：Windows 7 SP1+、8.1、10 或 11
+- Rust Windows 版：安装所有官方更新的 Windows 7 SP1 / Server 2008 R2 SP1、Windows 8.1 / Server 2012 R2、Windows 10 或 Windows 11
+- Rust Linux 版：RHEL 8 / Ubuntu 20.04 同时代或更新 glibc；可选小组件需要 KDE Plasma 6.0+
 
 ### 源码运行（Python）
 
@@ -62,7 +64,7 @@ scripts\build_exe.bat
 
 构建为 `dist\DeepSeekBalanceMonitor.exe`。GitHub Actions 会在每次 Release 时自动构建并上传 EXE。
 
-**Rust（`rust-windows/`）：**
+**Rust Windows（`rust-windows/`）：**
 
 ```powershell
 cd rust-windows
@@ -70,14 +72,29 @@ rustup toolchain install 1.77.2-x86_64-pc-windows-msvc
 cargo +1.77.2 build --release --target x86_64-pc-windows-msvc --locked
 ```
 
+**Rust Linux（`rust-linux/`）：**
+
+```bash
+cd rust-linux
+cargo +1.77.2 build --release --locked
+```
+
+Linux 发布包会安装 `/usr/local/bin/dsmon`、`/etc/systemd/user/dsmon.service`，并在 Plasma 6 环境中安装可选小组件：
+
+```bash
+tar -xzf deepseek-balance-monitor-0.2.0-linux-x86_64.tar.gz
+cd deepseek-balance-monitor-0.2.0-linux-x86_64
+sudo ./install.sh
+```
+
 ### Python 版与 Rust 版对比
 
-| | Python 版 | Rust 版 |
-|---|---|---|
-| 运行时 | Python + pystray + Tkinter | 原生 Rust |
-| 最低系统 | Windows 10+ | Windows 7 SP1+ |
-| 首次无 Key | 弹出设置窗口 | 打开 config.json 编辑 |
-| 开机自启 | 注册表 Run 键 | 启动文件夹快捷方式 |
+| | Python 版 | Rust Windows 版 | Rust Linux 版 |
+|---|---|---|---|
+| 运行时 | Python + pystray + Tkinter | 原生 Rust + native-windows-gui | 原生 Rust 命令行 |
+| 最低系统 | Windows 10+ | Windows 7 SP1+ | RHEL 8 / Ubuntu 20.04 同时代 glibc |
+| 首次无 Key | 弹出设置窗口 | 打开 `config.json` 编辑 | 输出配置路径并创建配置 |
+| 开机自启 | 注册表 Run 键 | 启动文件夹快捷方式 | systemd 用户服务 |
 
 ## 项目结构
 
@@ -99,6 +116,10 @@ DeepSeekBalance/
 │   ├── app.ico
 │   ├── app.manifest
 │   └── build.rs
+├── rust-linux/                # Rust Linux 命令行与 Plasma 6 小组件
+│   ├── src/main.rs
+│   ├── package/
+│   └── plasmoid/
 ├── main.py
 ├── requirements.txt
 └── README.md
@@ -106,7 +127,7 @@ DeepSeekBalance/
 
 ## 配置
 
-配置文件路径：`%APPDATA%\DeepSeek Balance Monitor\config.json`
+Windows 配置文件路径：`%APPDATA%\DeepSeek Balance Monitor\config.json`
 
 ```json
 {
@@ -121,7 +142,9 @@ DeepSeekBalance/
 }
 ```
 
-日志路径：`%APPDATA%\DeepSeek Balance Monitor\app.log`
+Linux `dsmon` 配置路径：`~/.config/deepseek-balance-monitor/config.json`，日志路径：`~/.local/state/deepseek-balance-monitor/app.log`。
+
+Windows 日志路径：`%APPDATA%\DeepSeek Balance Monitor\app.log`
 
 ## 托盘菜单
 
