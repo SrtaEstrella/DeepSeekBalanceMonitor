@@ -172,6 +172,17 @@ Windows 日志路径：`%APPDATA%\DeepSeek Balance Monitor\app.log`
 | 暖灰 | API 服务异常（余额数据可能已过时） |
 | 灰色 | 尚未完成首次查询，或未配置 Key |
 
+## 更新日志
+
+### v1.1
+
+- API 服务状态轮询，独立图标配色与变化提醒
+- 低余额提醒三选一：不提醒 / 持续提醒 / 仅提醒一次（默认）
+- 充值直达、日志与记录可配置自动清理
+- GitHub Actions 自动构建 Python 版
+- 社区移植：Rust Windows（Win7+）、macOS
+- 通知卡片重构、设置输入校验、移除第三方 HTTP 依赖
+
 ## 协议
 
 MIT

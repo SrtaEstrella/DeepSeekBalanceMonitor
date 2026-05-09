@@ -172,6 +172,17 @@ Windows logs are written to `%APPDATA%\DeepSeek Balance Monitor\app.log`.
 | Warm gray | API service is degraded (balance data may be stale) |
 | Gray | First check not yet completed, or no API key configured |
 
+## Changelog
+
+### v1.1
+
+- API service status polling with dedicated icon colour and change notifications
+- Three alert modes: never, always, or once per drop (default: once)
+- Top-up menu item, log & record retention with configurable cleanup
+- GitHub Actions auto-build for Python releases
+- Community ports: Rust Windows (Win7+), macOS
+- Refined notification layout, settings input validation, stdlib-only dependencies
+
 ## License
 
 MIT
