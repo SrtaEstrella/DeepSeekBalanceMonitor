@@ -1,0 +1,17 @@
+[package]
+name = "dsmon"
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.77.2"
+description = "Linux CLI usage monitor for the DeepSeek API"
+license = "MIT"
+
+[dependencies]
+chrono = { version = "=0.4.38", default-features = false, features = ["clock", "std"] }
+reqwest = { version = "=0.11.27", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "=1.0.197", features = ["derive"] }
+serde_json = "=1.0.114"
+
+# Keep the dependency graph parseable by Cargo 1.77.2.
+indexmap = "=2.2.6"
+url = "=2.5.0"

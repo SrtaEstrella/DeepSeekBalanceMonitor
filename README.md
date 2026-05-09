@@ -1,8 +1,8 @@
 # DeepSeek Balance Monitor / DeepSeek 余额监控
 
-A Windows system tray application that periodically queries the DeepSeek API for account balance, displays it as a dynamic tray icon, and alerts on low balance.
+A Windows tray app and Linux CLI/Plasma widget that periodically query the DeepSeek API for account balance and alert on low balance.
 
-一个 Windows 系统托盘应用，定时查询 DeepSeek API 账户余额，以动态图标形式显示在任务栏，余额过低时弹窗提醒。
+一个 Windows 托盘应用和 Linux 命令行 / Plasma 小组件，定时查询 DeepSeek API 账户余额，并在余额过低时提醒。
 
 ![preview](preview.png)
 
@@ -16,7 +16,8 @@ A Windows system tray application that periodically queries the DeepSeek API for
 - **Low balance notification** — A desktop notification fires when balance drops below your configured threshold. Alerts can be disabled in settings; the icon still turns red regardless.
 - **Balance details** — Left-click the icon (or right-click → View Balance) to see a full breakdown: total, topped-up, and granted balance per currency, plus last check time.
 - **Settings** — API key, check interval (1–1440 min), alert threshold, language (Chinese / English), and auto-start on boot. The Python build opens the settings dialog when no key is configured; the Rust build opens `config.json` and shows a local-storage notice.
-- **Rust Windows build** — `v0.1.1` provides a native Rust tray app with a bundled DeepSeek icon, embedded Windows manifest, Win7/Win8.1 compatibility target, startup-folder shortcut based auto-start, centered tray numbers, and a clearer settings-window font.
+- **Rust Windows build** — `v0.2.0` provides a native Rust tray app with a bundled DeepSeek icon, embedded Windows manifest, Win7/Win8.1 compatibility target, startup-folder shortcut based auto-start, centered tray numbers, and a clearer settings-window font.
+- **Rust Linux build** — `v0.2.0` adds `dsmon`, a CLI daemon with systemd user service support, log retention, and an optional KDE Plasma 6 widget.
 
 #### Notification Previews
 
@@ -36,12 +37,13 @@ A Windows system tray application that periodically queries the DeepSeek API for
 
 ### Direct Download
 
-Grab the latest executable from [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases). Use `DeepSeekBalanceMonitor.exe` for the Python-packaged build or `deepseek-balance-monitor.exe` for the Rust Windows build. No Python is required for release executables.
+Grab the latest files from [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases). Use `DeepSeekBalanceMonitor.exe` for the Python-packaged build, `deepseek-balance-monitor.exe` for the Rust Windows build, or `deepseek-balance-monitor-*-linux-x86_64.tar.gz` for Linux. No Python is required for release builds.
 
 ### Requirements
 
 - Python build: Windows 10 or later, Python 3.10+
 - Rust build: Windows 7 SP1 / Server 2008 R2 SP1 with all official updates, Windows 8.1 / Server 2012 R2, Windows 10, or Windows 11
+- Linux build: RHEL 8 / Ubuntu 20.04 era glibc or newer; KDE Plasma 6.0+ for the optional widget
 
 ### Run from Source
 
@@ -75,7 +77,24 @@ rustup toolchain install 1.77.2-x86_64-pc-windows-msvc
 cargo +1.77.2 build --release --target x86_64-pc-windows-msvc --locked
 ```
 
-GitHub Actions publishes the release executable as `deepseek-balance-monitor.exe` on `v0.1.1`.
+GitHub Actions publishes the release executable as `deepseek-balance-monitor.exe` on `v0.2.0`.
+
+### Rust Linux Build
+
+The Linux port lives in `rust-linux/` and builds the `dsmon` CLI.
+
+```bash
+cd rust-linux
+cargo +1.77.2 build --release --locked
+```
+
+Release tarballs install `/usr/local/bin/dsmon`, `/etc/systemd/user/dsmon.service`, and, on Plasma 6 systems, the optional Plasma widget:
+
+```bash
+tar -xzf deepseek-balance-monitor-0.2.0-linux-x86_64.tar.gz
+cd deepseek-balance-monitor-0.2.0-linux-x86_64
+sudo ./install.sh
+```
 
 ### Python vs Rust Build
 
@@ -110,6 +129,10 @@ DeepSeekBalance/
 │   ├── app.ico
 │   ├── app.manifest
 │   └── build.rs
+├── rust-linux/                # Rust Linux CLI and Plasma 6 widget
+│   ├── src/main.rs
+│   ├── package/
+│   └── plasmoid/
 ├── main.py
 ├── requirements.txt
 └── README.md
@@ -164,7 +187,8 @@ MIT
 - **低余额通知** — 余额低于设定阈值时弹出桌面通知。可在设置中关闭通知，关闭后图标仍会变红作为视觉提醒。
 - **余额详情** — 左键单击图标（或右键 → 查看余额）可查看完整明细：每种币种的总余额、充值余额、赠送余额，以及上次查询时间。
 - **设置** — API Key、查询间隔（1–1440 分钟）、预警阈值、语言（中文 / English）、开机自启。Python 版未配置 Key 时会弹出设置窗口；Rust 版会打开 `config.json` 并提示配置仅保存在本机。
-- **Rust Windows 版** — `v0.1.1` 提供原生 Rust 托盘程序，包含 DeepSeek 图标、嵌入式 Windows manifest、Win7/Win8.1 兼容目标、基于启动文件夹快捷方式的自启动、托盘数字居中修复和更清晰的设置窗口字体。
+- **Rust Windows 版** — `v0.2.0` 提供原生 Rust 托盘程序，包含 DeepSeek 图标、嵌入式 Windows manifest、Win7/Win8.1 兼容目标、基于启动文件夹快捷方式的自启动、托盘数字居中修复和更清晰的设置窗口字体。
+- **Rust Linux 版** — `v0.2.0` 增加 `dsmon` 命令行守护进程、systemd 用户服务、日志保留和可选 KDE Plasma 6 小组件。
 
 #### 通知预览
 
@@ -184,12 +208,13 @@ MIT
 
 ### 直接下载
 
-从 [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases) 下载最新可执行文件。Python 打包版使用 `DeepSeekBalanceMonitor.exe`，Rust Windows 版使用 `deepseek-balance-monitor.exe`；发布版无需 Python 环境。
+从 [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases) 下载最新文件。Python 打包版使用 `DeepSeekBalanceMonitor.exe`，Rust Windows 版使用 `deepseek-balance-monitor.exe`，Linux 版使用 `deepseek-balance-monitor-*-linux-x86_64.tar.gz`；发布版无需 Python 环境。
 
 ### 运行要求
 
 - Python 版：Windows 10 及以上，Python 3.10+
 - Rust 版：安装所有官方更新的 Windows 7 SP1 / Server 2008 R2 SP1、Windows 8.1 / Server 2012 R2、Windows 10 或 Windows 11
+- Linux 版：RHEL 8 / Ubuntu 20.04 同时代或更新 glibc；可选小组件需要 KDE Plasma 6.0+
 
 ### 源码运行
 
@@ -223,7 +248,24 @@ rustup toolchain install 1.77.2-x86_64-pc-windows-msvc
 cargo +1.77.2 build --release --target x86_64-pc-windows-msvc --locked
 ```
 
-GitHub Actions 会在 `v0.1.1` 发布页上传 `deepseek-balance-monitor.exe`。
+GitHub Actions 会在 `v0.2.0` 发布页上传 `deepseek-balance-monitor.exe`。
+
+### Rust Linux 构建
+
+Linux 版本位于 `rust-linux/`，构建命令行程序 `dsmon`。
+
+```bash
+cd rust-linux
+cargo +1.77.2 build --release --locked
+```
+
+发布 tarball 会安装 `/usr/local/bin/dsmon`、`/etc/systemd/user/dsmon.service`，并在 Plasma 6 环境中安装可选小组件：
+
+```bash
+tar -xzf deepseek-balance-monitor-0.2.0-linux-x86_64.tar.gz
+cd deepseek-balance-monitor-0.2.0-linux-x86_64
+sudo ./install.sh
+```
 
 ### Python 版与 Rust 版对比
 
@@ -258,6 +300,10 @@ DeepSeekBalance/
 │   ├── app.ico
 │   ├── app.manifest
 │   └── build.rs
+├── rust-linux/                # Rust Linux 命令行与 Plasma 6 小组件
+│   ├── src/main.rs
+│   ├── package/
+│   └── plasmoid/
 ├── main.py
 ├── requirements.txt
 └── README.md
