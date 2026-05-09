@@ -20,16 +20,15 @@ A Windows system tray application that periodically queries the DeepSeek API for
 
 **Normal balance view:**
 
-> DeepSeek Balance:
-> 12.34 CNY (Topped 10.00, Granted 2.34)
-> Last Check: 2026-05-08 14:30:00
+> DeepSeek Balance:  
+> 12.34 CNY (Topped 10.00, Granted 2.34)  
+> Last Check: 2026-05-08 14:30:00  
 > DeepSeek API Status: 🟢 All Systems Operational
 
 **Low balance alert:**
 
-> ⚠ DeepSeek Low Balance
->
-> Balance is only 0.50, below your alert threshold of 1.00.
+> ⚠ DeepSeek Low Balance  
+> Balance is only 0.50, below your alert threshold of 1.00.  
 > Please top up!
 
 ## Getting Started
