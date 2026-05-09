@@ -14,7 +14,7 @@ A Windows system tray application that periodically queries the DeepSeek API for
 - **Low balance notification** — Three modes: never, always, or once per drop (default). The icon turns red regardless.
 - **Balance details** — Left-click the icon to see balance, API service status, and last check time.
 - **Settings** — API key, check interval, alert threshold, alert mode, API status alerts, language, and auto-start on boot.
-- **Rust Windows build** — Community-contributed native Rust build (`rust-windows/`). Smaller binary, Win7/Win8.1 support, bundled DeepSeek icon, startup-folder auto-start.
+- **Rust Windows build** — Community-contributed native Rust build (`rust-windows/`). Smaller binary, Win7/Win8.1 support, startup-folder auto-start.
 
 ### Notification Previews
 
@@ -28,7 +28,7 @@ A Windows system tray application that periodically queries the DeepSeek API for
 **Low balance alert:**
 
 > ⚠ DeepSeek Low Balance
-> 
+>
 > Balance is only 0.50, below your alert threshold of 1.00.
 > Please top up!
 
