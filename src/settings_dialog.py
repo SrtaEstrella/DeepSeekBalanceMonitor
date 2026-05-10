@@ -11,7 +11,7 @@ def open_settings(app):
         try:
             app._settings_window.deiconify()
             app._settings_window.lift()
-            app._settings_window.focus_force()
+            app._settings_window.after(50, app._settings_window.focus_force)
         except Exception:
             pass
         return
@@ -21,13 +21,17 @@ def open_settings(app):
         import os
         import sys
         import tkinter as tk
-        from tkinter import ttk, messagebox
+        from tkinter import ttk, messagebox, filedialog
 
         from src.config import T, save_config, log
 
         lang = app.lang
 
-        root = tk.Tk()
+        if app._tk_root is None:
+            app._tk_root = tk.Tk()
+            app._tk_root.withdraw()
+        top = app._tk_root
+        root = tk.Toplevel(top)
         app._settings_window = root
 
         def _cleanup():
@@ -285,6 +289,23 @@ def open_settings(app):
         retention_sb = ttk.Spinbox(rfr, from_=1, to=3650, textvariable=retention_var, width=8)
         retention_sb.pack(side="left")
 
+        ttk.Label(scroll_frame, text=T("export_label", lang)).pack(anchor="w")
+        export_frame = ttk.Frame(scroll_frame)
+        export_frame.pack(fill="x", pady=(0, 8))
+        export_var = tk.StringVar(value=app.config.get("export_path", ""))
+        export_entry = ttk.Entry(export_frame, textvariable=export_var)
+        export_entry.pack(side="left", fill="x", expand=True)
+        ttk.Button(export_frame, text=T("export_browse", lang),
+                   command=lambda: export_var.set(
+                       filedialog.askdirectory() or export_var.get())
+                   ).pack(side="left", padx=(4, 0))
+
+        ttk.Label(scroll_frame, text=T("proxy_label", lang)).pack(anchor="w")
+        proxy_var = tk.StringVar(value=app.config.get("http_proxy", ""))
+        ttk.Entry(scroll_frame, textvariable=proxy_var).pack(fill="x", pady=(0, 2))
+        ttk.Label(scroll_frame, text=T("proxy_hint", lang),
+                  foreground="gray").pack(anchor="w", pady=(0, 8))
+
         # Prevent accidental value changes via mousewheel on spinboxes and
         # comboboxes — these are too easy to bump while scrolling the dialog.
         _no_scroll = lambda e: "break"
@@ -292,10 +313,20 @@ def open_settings(app):
             w.bind("<MouseWheel>", _no_scroll)
 
         ttk.Separator(scroll_frame, orient="horizontal").pack(fill="x", pady=(12, 8))
-        ttk.Label(scroll_frame, text="V1.0.1_260508",
+        ttk.Label(scroll_frame, text="v1.2_260511",
                   foreground="gray").pack(anchor="w")
-        ttk.Label(scroll_frame, text="GitHub @SrtaEstrella  |  RedNote @Estella_han",
+        ttk.Label(scroll_frame, text="by GitHub @SrtaEstrella（RedNote @Estella_han）",
                   foreground="gray").pack(anchor="w", pady=(2, 0))
+        ttk.Label(scroll_frame, text="Contributors: @wenyinos @CHW0n9",
+                  foreground="gray").pack(anchor="w", pady=(2, 0))
+
+        def _open_repo():
+            import webbrowser
+            webbrowser.open("https://github.com/SrtaEstrella/DeepSeekBalanceMonitor")
+        link = tk.Label(scroll_frame, text="github.com/SrtaEstrella/DeepSeekBalanceMonitor",
+                        foreground="#3C6966", cursor="hand2", font=("Segoe UI", 8, "underline"))
+        link.pack(anchor="w", pady=(2, 0))
+        link.bind("<Button-1>", lambda e: _open_repo())
 
         # Force initial scrollregion now that all children are packed.
         # Must happen before the footer's own pack to avoid a zero-height frame.
@@ -372,6 +403,10 @@ def open_settings(app):
             app.config["alert_mode"] = alert_mode_map.get(alert_mode_var.get(), "always")
             app.config["api_alert_enabled"] = api_alert_var.get()
             app.config["retention_days"] = retention
+            app.config["export_path"] = export_var.get()
+            app.config["http_proxy"] = proxy_var.get().strip()
+            from src.api_client import install_proxy
+            install_proxy(app.config["http_proxy"])
 
             t_idx = theme_display.index(theme_var.get()) if theme_var.get() in theme_display else 0
             t_key = THEME_KEYS[t_idx]
@@ -399,6 +434,6 @@ def open_settings(app):
         root.bind("<Return>", lambda e: on_save())
         root.bind("<Escape>", lambda e: _cleanup())
         api_entry.focus_set()
-        root.mainloop()
+        top.mainloop()
 
     _dialog()

@@ -20,6 +20,9 @@ class AppState:
         self._lock = threading.Lock()
         self._settings_open = False
         self._settings_window = None
+        self._history_open = False
+        self._history_window = None
+        self._tk_root = None
         self._alert_suppressed = False
         self._api_was_operational = True
         self.demo_mode = False

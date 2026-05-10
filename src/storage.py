@@ -161,12 +161,10 @@ def get_consumption_rate(hours=24):
         for i in range(1, len(rows)):
             val = rows[i][2]
             if val > prev_val:
-                # Top-up — close current interval
                 intervals.append((start_val, start_ts, prev_val, rows[i-1][0]))
                 start_val = val
                 start_ts = rows[i][0]
             prev_val = val
-        # Last interval
         intervals.append((start_val, start_ts, prev_val, rows[-1][0]))
 
         total_consumed = 0.0

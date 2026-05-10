@@ -9,10 +9,10 @@ from datetime import datetime
 import pystray
 
 from src.config import T, log, CONFIG_DIR, APP_NAME, APP_ID
-from src.api_client import fetch_balance, fetch_service_status
+from src.api_client import fetch_balance, fetch_service_status, install_proxy
 from src.icon_renderer import create_icon_image
 from src.app_state import AppState
-from src.storage import save_balance_record, prune_old_data
+from src.storage import save_balance_record, prune_old_data, get_consumption_rate, get_history_page, export_all_csv
 
 _DEMO = {
     "balances": {"CNY": {"total_balance": 42.50, "topped_up_balance": 40.00, "granted_balance": 2.50}},
@@ -178,28 +178,26 @@ def on_show_balance(icon, item):
     lines = []
 
     if err:
-        lines.append(T("bal_error_msg", lang, error=err))
+        lines.append(f"⚠ {T('bal_error_msg', lang, error=err)}")
     elif not balances:
-        lines.append(T("bal_empty_msg", lang))
+        lines.append(f"⏳ {T('bal_empty_msg', lang)}")
     else:
         pb = app.get_preferred_balance()
         if pb:
-            lines.append(T("bal_line", lang,
+            lines.append(f"💰 {T('bal_line', lang,
                            balance=f"{pb['total_balance']:,.2f}",
-                           code=pb["currency"],
+                           code=pb['currency'],
                            topped=f"{pb['topped_up_balance']:,.2f}",
-                           granted=f"{pb['granted_balance']:,.2f}"))
+                           granted=f"{pb['granted_balance']:,.2f}")}")
         else:
             first_code = next(iter(balances))
             b = balances[first_code]
-            lines.append(T("bal_line", lang,
+            lines.append(f"💰 {T('bal_line', lang,
                            balance=f"{b['total_balance']:,.2f}",
                            code=first_code,
                            topped=f"{b['topped_up_balance']:,.2f}",
-                           granted=f"{b['granted_balance']:,.2f}"))
-        time_str = last.strftime("%Y-%m-%d %H:%M:%S") if last else "-"
+                           granted=f"{b['granted_balance']:,.2f}")}")
 
-        from src.storage import get_consumption_rate
         cr = get_consumption_rate()
         if cr:
             daily_rate, hours_left, _curr = cr
@@ -207,16 +205,26 @@ def on_show_balance(icon, item):
             hrs = int(hours_left % 24)
             if lang == "en":
                 lines.append(
-                    f"Avg: {daily_rate:.2f}/day  |  Est. {days}d {hrs}h remaining"
+                    f"📊 Avg: {daily_rate:.2f}/day  |  Est. {days}d {hrs}h remaining"
                 )
             else:
                 lines.append(
-                    f"日均消耗 {daily_rate:.2f}  |  预计可用 {days} 天 {hrs} 小时"
+                    f"📊 日均消耗 {daily_rate:.2f}  |  预计可用 {days} 天 {hrs} 小时"
                 )
 
-        lines.append(T("last_check", lang) + ": " + time_str)
-
-    lines.append(status_line)
+    lines.append(f"📡 {status_line}")
+    if last:
+        diff = datetime.now() - last
+        mins = int(diff.total_seconds() / 60)
+        if mins < 1:
+            ago = "just now" if lang == "en" else "刚刚"
+        elif mins < 60:
+            ago = f"{mins} min ago" if lang == "en" else f"{mins} 分钟前"
+        else:
+            hrs = mins // 60
+            ago = f"{hrs} hr ago" if lang == "en" else f"{hrs} 小时前"
+        sep = ": " if lang == "en" else "："
+        lines.append(f"🕐 {T('last_check', lang)}{sep}{ago}")
     msg = "\n".join(lines)
 
     try:
@@ -239,12 +247,34 @@ def _on_history(icon, item):
     if app is None:
         return
 
+    if app._history_open:
+        try:
+            app._history_window.deiconify()
+            app._history_window.lift()
+            app._history_window.after(50, app._history_window.focus_force)
+        except Exception:
+            pass
+        return
+
     import tkinter as tk
     from tkinter import ttk
-    from src.storage import get_history_page
 
     lang = app.lang
-    win = tk.Tk()
+
+    if app._tk_root is None:
+        app._tk_root = tk.Tk()
+        app._tk_root.withdraw()
+    root = app._tk_root
+    win = tk.Toplevel(root)
+    app._history_open = True
+    app._history_window = win
+
+    def _cleanup():
+        app._history_open = False
+        app._history_window = None
+        win.destroy()
+
+    win.protocol("WM_DELETE_WINDOW", _cleanup)
     win.title(T("history", lang))
     win.geometry("850x640")
     win.minsize(500, 400)
@@ -311,7 +341,6 @@ def _on_history(icon, item):
     rate_label.pack(fill="x", padx=14, pady=(2, 0))
 
     def _update_rate_label():
-        from src.storage import get_consumption_rate
         cr = get_consumption_rate()
         if cr:
             daily_rate, hours_left, curr = cr
@@ -346,7 +375,7 @@ def _on_history(icon, item):
     def _redraw_chart():
         # Reverse so oldest is on the left
         totals = [(r["total"], r["currency"]) for r in reversed(all_rows) if r["currency"]]
-        totals = totals[-100:]
+        totals = totals[-1000:]
         if len(totals) < 2:
             chart.delete("all")
             return
@@ -372,12 +401,10 @@ def _on_history(icon, item):
             chart.create_text(ml - 6, y, text=f"{v:.1f}", anchor="e",
                               fill="#666", font=("Segoe UI", 7))
 
-        if len(all_rows) >= 100:
-            first_ts = all_rows[99]["timestamp"]
+        if all_rows:
             last_ts = all_rows[0]["timestamp"]
-        elif all_rows:
-            first_ts = all_rows[-1]["timestamp"]
-            last_ts = all_rows[0]["timestamp"]
+            n = min(len(all_rows), 1000)
+            first_ts = all_rows[n - 1]["timestamp"]
         else:
             first_ts = last_ts = ""
         chart.create_text(ml, mt + h + 6, text=first_ts[:10] if len(first_ts) > 10 else first_ts,
@@ -417,18 +444,41 @@ def _on_history(icon, item):
         _redraw_chart()
         _update_rate_label()
 
+    def _export_csv():
+        from tkinter import filedialog, messagebox
+        import os, datetime as _dt
+        path = app.config.get("export_path", "").strip()
+        if path:
+            ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            f = os.path.join(path, f"deepseek_balance_{ts}.csv")
+        else:
+            f = filedialog.asksaveasfilename(
+                parent=win, defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv")],
+                initialfile="deepseek_balance_history.csv",
+            )
+        if f:
+            n = export_all_csv(f)
+            msg = f"{n} records exported" if lang == "en" else f"已导出 {n} 条记录"
+            messagebox.showinfo("Export", msg, parent=win)
+
+    export_btn = ttk.Button(btn_frame, text="Export CSV" if lang == "en" else "导出 CSV",
+                            command=_export_csv)
+
     load_btn.configure(command=_load_page)
     if lang == "en":
         load_btn.pack(side="left")
+        export_btn.pack(side="left", padx=(6, 0))
         ttk.Button(btn_frame, text="Close", command=win.destroy).pack(side="right")
     else:
         load_btn.pack(side="left")
+        export_btn.pack(side="left", padx=(6, 0))
         ttk.Button(btn_frame, text="关闭", command=win.destroy).pack(side="right")
 
     _load_page()
-    win.protocol("WM_DELETE_WINDOW", win.destroy)
+    win.protocol("WM_DELETE_WINDOW", lambda: (win.destroy(), setattr(app, '_history_open', False)))
     win.focus_force()
-    win.mainloop()
+    root.mainloop()
 
 
 def on_settings(icon, item):
@@ -467,7 +517,10 @@ def _on_dev_tools(icon, item):
     from tkinter import ttk
 
     lang = app.lang
-    win = tk.Tk()
+    if app._tk_root is None:
+        app._tk_root = tk.Tk()
+        app._tk_root.withdraw()
+    win = tk.Toplevel(app._tk_root)
     win.title("Dev Tools")
     win.geometry("300x380")
     win.resizable(False, False)
@@ -517,7 +570,7 @@ def _on_dev_tools(icon, item):
 
     win.protocol("WM_DELETE_WINDOW", win.destroy)
     win.focus_force()
-    win.mainloop()
+    app._tk_root.mainloop()
 
 
 def make_menu(app: AppState):
@@ -543,6 +596,11 @@ def main():
     log(f"{APP_NAME} starting")
 
     app = AppState()
+    proxy = app.config.get("http_proxy", "").strip()
+    if proxy:
+        install_proxy(proxy)
+        log(f"Proxy set: {proxy}")
+
     if "--demo" in sys.argv:
         app.demo_mode = True
         log("Demo mode enabled")
