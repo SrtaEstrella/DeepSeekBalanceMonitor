@@ -12,7 +12,7 @@ from src.config import T, log, CONFIG_DIR, APP_NAME, APP_ID
 from src.api_client import fetch_balance, fetch_service_status, install_proxy
 from src.icon_renderer import create_icon_image
 from src.app_state import AppState
-from src.storage import save_balance_record, prune_old_data
+from src.storage import save_balance_record, prune_old_data, get_consumption_rate, get_history_page, export_all_csv
 
 _DEMO = {
     "balances": {"CNY": {"total_balance": 42.50, "topped_up_balance": 40.00, "granted_balance": 2.50}},
@@ -197,20 +197,7 @@ def on_show_balance(icon, item):
                            code=first_code,
                            topped=f"{b['topped_up_balance']:,.2f}",
                            granted=f"{b['granted_balance']:,.2f}")}")
-        if last:
-            diff = datetime.now() - last
-            mins = int(diff.total_seconds() / 60)
-            if mins < 1:
-                ago = "just now" if lang == "en" else "刚刚"
-            elif mins < 60:
-                ago = f"{mins} min ago" if lang == "en" else f"{mins} 分钟前"
-            else:
-                hrs = mins // 60
-                ago = f"{hrs} hr ago" if lang == "en" else f"{hrs} 小时前"
-            sep = ": " if lang == "en" else "："
-            lines.append(f"🕐 {T('last_check', lang)}{sep}{ago}")
 
-        from src.storage import get_consumption_rate
         cr = get_consumption_rate()
         if cr:
             daily_rate, hours_left, _curr = cr
@@ -226,6 +213,18 @@ def on_show_balance(icon, item):
                 )
 
     lines.append(f"📡 {status_line}")
+    if last:
+        diff = datetime.now() - last
+        mins = int(diff.total_seconds() / 60)
+        if mins < 1:
+            ago = "just now" if lang == "en" else "刚刚"
+        elif mins < 60:
+            ago = f"{mins} min ago" if lang == "en" else f"{mins} 分钟前"
+        else:
+            hrs = mins // 60
+            ago = f"{hrs} hr ago" if lang == "en" else f"{hrs} 小时前"
+        sep = ": " if lang == "en" else "："
+        lines.append(f"🕐 {T('last_check', lang)}{sep}{ago}")
     msg = "\n".join(lines)
 
     try:
@@ -259,7 +258,6 @@ def _on_history(icon, item):
 
     import tkinter as tk
     from tkinter import ttk
-    from src.storage import get_history_page
 
     lang = app.lang
 
@@ -343,7 +341,6 @@ def _on_history(icon, item):
     rate_label.pack(fill="x", padx=14, pady=(2, 0))
 
     def _update_rate_label():
-        from src.storage import get_consumption_rate
         cr = get_consumption_rate()
         if cr:
             daily_rate, hours_left, curr = cr
@@ -378,7 +375,7 @@ def _on_history(icon, item):
     def _redraw_chart():
         # Reverse so oldest is on the left
         totals = [(r["total"], r["currency"]) for r in reversed(all_rows) if r["currency"]]
-        totals = totals[-100:]
+        totals = totals[-1000:]
         if len(totals) < 2:
             chart.delete("all")
             return
@@ -404,12 +401,10 @@ def _on_history(icon, item):
             chart.create_text(ml - 6, y, text=f"{v:.1f}", anchor="e",
                               fill="#666", font=("Segoe UI", 7))
 
-        if len(all_rows) >= 100:
-            first_ts = all_rows[99]["timestamp"]
+        if all_rows:
             last_ts = all_rows[0]["timestamp"]
-        elif all_rows:
-            first_ts = all_rows[-1]["timestamp"]
-            last_ts = all_rows[0]["timestamp"]
+            n = min(len(all_rows), 1000)
+            first_ts = all_rows[n - 1]["timestamp"]
         else:
             first_ts = last_ts = ""
         chart.create_text(ml, mt + h + 6, text=first_ts[:10] if len(first_ts) > 10 else first_ts,
@@ -451,7 +446,6 @@ def _on_history(icon, item):
 
     def _export_csv():
         from tkinter import filedialog, messagebox
-        from src.storage import export_all_csv
         import os, datetime as _dt
         path = app.config.get("export_path", "").strip()
         if path:

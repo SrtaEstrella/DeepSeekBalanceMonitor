@@ -1,6 +1,7 @@
 """
 Balance history storage — SQLite-backed, for spend-rate / trend analysis.
 """
+import csv
 import sqlite3
 from datetime import datetime
 
@@ -95,7 +96,6 @@ def get_history_page(limit: int = 100, offset: int = 0):
 
 def export_all_csv(path: str) -> int:
     """Export all balance records to a CSV file. Returns row count."""
-    import csv
     try:
         conn = _connect()
         cur = conn.execute(
