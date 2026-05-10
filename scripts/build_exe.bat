@@ -49,7 +49,7 @@ pyinstaller ^
     --icon assets/app.ico ^
     --paths src ^
     --add-data "assets/app.ico;." ^
-    --version-file version_info.txt ^
+    --version-file scripts/version_info.txt ^
     --clean ^
     main.py
 

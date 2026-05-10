@@ -9,7 +9,7 @@ A Windows tray app and Linux CLI/Plasma widget that periodically query the DeepS
 **Linux Plasma widget preview**
 The desktop widget is only supported on KDE Plasma 6.
 
-![Linux preview](preview_linux.png)
+![Linux preview](assets/preview_linux.png)
 
 ---
 

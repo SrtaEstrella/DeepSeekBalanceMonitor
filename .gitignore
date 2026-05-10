@@ -5,8 +5,6 @@ __pycache__/
 *.pyc
 *.pyo
 *.spec
-app_icon.ico
-DeepSeekBalanceMonitor.exe
 *.log
 
 # Rust local build output and cache
