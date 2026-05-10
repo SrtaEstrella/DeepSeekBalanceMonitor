@@ -3,6 +3,7 @@ name: Rust Windows
 on:
   push:
     branches:
+      - "main"
       - "Rust-Dev"
     tags:
       - "rust-v[0-9]*"
@@ -40,6 +41,9 @@ jobs:
         run: |
           cargo +1.77.2 check --target x86_64-pc-windows-msvc --locked
           cargo +1.77.2 check --target i686-pc-windows-msvc --locked
+
+      - name: Run unit tests
+        run: cargo +1.77.2 test --locked
 
       - name: Build release executables
         run: |
