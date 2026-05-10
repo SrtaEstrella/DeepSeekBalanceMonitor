@@ -239,10 +239,12 @@ def load_config() -> dict:
 
 def save_config(config: dict) -> None:
     try:
-        config.pop("enable_alerts", None)  # discard legacy key
+        safe = {**config}
+        safe.pop("enable_alerts", None)
+        safe["api_key"] = ""  # keep credential manager as sole storage
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
+            json.dump(safe, f, indent=2, ensure_ascii=False)
         log("Config saved")
     except Exception as e:
         log(f"Failed to save config: {e}")

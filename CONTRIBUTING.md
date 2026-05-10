@@ -6,7 +6,7 @@
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `api_key` | string | `""` | |
+| `api_key` | string | `""` | deprecated — stored in system credential manager, config.json holds `""` as fallback |
 | `interval_minutes` | int | `10` | 1–1440 |
 | `threshold_yuan` | float | `1.0` | 0–10000 |
 | `language` | string | `"zh"` | `"zh"` or `"en"` |
@@ -104,7 +104,7 @@ DeepSeek 余额：                              ← 固定标题
 ### Behaviour
 
 - **自定义图标配色**：5 套预置主题 + custom 模式，`_get_colors(config)` 统一读取。托盘文字和描边颜色基于背景亮度自选黑白（阈值 170）。保存后图标即时刷新
-- **Windows 凭据管理器**：`load_config()` 在加载文件后尝试 `read_credential()`，无 config.json 时也尝试。`on_save` 同步写入，保存后即时生效
+- **Windows 凭据管理器**：API Key 不再写入 config.json，专存系统凭据管理器。`load_config()` 仍兼容读取旧 config.json 中的 key 作为迁移兜底
 - **Demo 模式**：`--demo` 启动，`app.demo_mode = True`，`do_balance_check` 使用预设数据。右键菜单新增「🛠 开发者」面板调节各种参数
 - **历史记录页**：右键新增「📊 历史记录」，Treeview 分页表格（100 条/页）+ Canvas 折线图（与表格数据同步，上限 1000 点）+ 消耗速率标签。支持 CSV 导出全部记录
 - **消耗速率**：`get_consumption_rate()` 基于 topped 余额计算非递增区间，按时长加权平均，返回日均消耗和预计剩余天/小时。余额通知和历史页同步显示

@@ -249,7 +249,7 @@ Rust Windows 和 Rust Linux 会在各自应用数据目录保存 `balance_histor
 - HTTP 代理支持，适配公司内网等受限网络环境
 
 **变更**
-- API Key 加密存入 Windows 凭据管理器
+- API Key 专存 Windows 凭据管理器，不再写入 config.json 明文
 - 余额详情通知卡片视觉优化：添加前缀 emoji，上次查询时间改为仅显示相对时间
 - API 服务状态同步写入本地数据库，每次余额查询附带记录
 

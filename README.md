@@ -249,7 +249,7 @@ Rust Windows and Rust Linux store balance history in `balance_history.db` next t
 - HTTP proxy support for restricted network environments
 
 **Changed**
-- API key now stored encrypted in Windows Credential Manager instead of plaintext `config.json`
+- API key now stored exclusively in Windows Credential Manager, no longer written to plaintext `config.json`
 - Balance detail notification visual polish: emoji prefixes for each line, last-check now shows relative time only
 - API service status now recorded alongside each balance entry in the local database
 
