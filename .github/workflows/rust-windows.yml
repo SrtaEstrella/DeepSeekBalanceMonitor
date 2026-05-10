@@ -31,31 +31,41 @@ jobs:
       - name: Install Rust 1.77.2
         run: |
           rustup toolchain install 1.77.2 --profile minimal --component rustfmt
-          rustup target add x86_64-pc-windows-msvc --toolchain 1.77.2
+          rustup target add x86_64-pc-windows-msvc i686-pc-windows-msvc --toolchain 1.77.2
 
       - name: Check formatting
         run: cargo +1.77.2 fmt --check
 
-      - name: Check Windows target
-        run: cargo +1.77.2 check --target x86_64-pc-windows-msvc --locked
+      - name: Check Windows targets
+        run: |
+          cargo +1.77.2 check --target x86_64-pc-windows-msvc --locked
+          cargo +1.77.2 check --target i686-pc-windows-msvc --locked
 
-      - name: Build release executable
-        run: cargo +1.77.2 build --release --target x86_64-pc-windows-msvc --locked
+      - name: Build release executables
+        run: |
+          cargo +1.77.2 build --release --target x86_64-pc-windows-msvc --locked
+          cargo +1.77.2 build --release --target i686-pc-windows-msvc --locked
 
-      - name: Create versioned executable
+      - name: Create versioned executables
         run: |
           $version = "${env:GITHUB_REF_NAME}"
           if ($version.StartsWith("rust-v")) {
             $version = $version.Substring(6)
           }
-          $asset = "target/x86_64-pc-windows-msvc/release/deepseek-balance-monitor-${version}-windows-x86_64.exe"
-          Copy-Item "target/x86_64-pc-windows-msvc/release/deepseek-balance-monitor.exe" $asset
+          $targets = @(
+            @{ Triple = "x86_64-pc-windows-msvc"; Arch = "x86_64" },
+            @{ Triple = "i686-pc-windows-msvc"; Arch = "i686" }
+          )
+          foreach ($target in $targets) {
+            $asset = "target/$($target.Triple)/release/deepseek-balance-monitor-${version}-windows-$($target.Arch).exe"
+            Copy-Item "target/$($target.Triple)/release/deepseek-balance-monitor.exe" $asset
+          }
 
       - name: Upload executable
         uses: actions/upload-artifact@v4
         with:
-          name: deepseek-balance-monitor-windows-x86_64
-          path: rust-windows/target/x86_64-pc-windows-msvc/release/deepseek-balance-monitor-*-windows-x86_64.exe
+          name: deepseek-balance-monitor-windows
+          path: rust-windows/target/*-pc-windows-msvc/release/deepseek-balance-monitor-*-windows-*.exe
 
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/')
@@ -64,10 +74,13 @@ jobs:
         run: |
           $tag = "${env:GITHUB_REF_NAME}"
           $version = $tag.Substring(6)
-          $asset = "target/x86_64-pc-windows-msvc/release/deepseek-balance-monitor-${version}-windows-x86_64.exe"
+          $assets = @(
+            "target/x86_64-pc-windows-msvc/release/deepseek-balance-monitor-${version}-windows-x86_64.exe",
+            "target/i686-pc-windows-msvc/release/deepseek-balance-monitor-${version}-windows-i686.exe"
+          )
           gh release view $tag --repo "${env:GITHUB_REPOSITORY}" *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag $asset --clobber --repo "${env:GITHUB_REPOSITORY}"
+            gh release upload $tag $assets --clobber --repo "${env:GITHUB_REPOSITORY}"
           } else {
-            gh release create $tag $asset --title $tag --notes "Rust Windows native build." --repo "${env:GITHUB_REPOSITORY}"
+            gh release create $tag $assets --title $tag --notes "Rust Windows native build." --repo "${env:GITHUB_REPOSITORY}"
           }
