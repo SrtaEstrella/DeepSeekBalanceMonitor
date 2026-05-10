@@ -4,7 +4,7 @@ A Windows tray app and Linux CLI/Plasma widget that periodically query the DeepS
 
 [中文版](README_zh.md)
 
-![preview](preview.png)
+![preview](assets/preview.png)
 
 **Linux Plasma widget preview**
 The desktop widget is only supported on KDE Plasma 6.
@@ -23,7 +23,7 @@ The desktop widget is only supported on KDE Plasma 6.
 - **Rust Linux build** — `dsmon` CLI daemon (`rust-linux/`) with systemd user service support, log retention, and an optional KDE Plasma 6 widget.
 - **Balance history** — Rust builds store SQLite balance history, show trend summaries in settings, and export CSV.
 - **Plasma widget integration** — The Linux widget reads `dsmon` command output, can start/stop the daemon, and reports command errors through desktop notifications.
-- **macOS build** — Community-contributed macOS port (`src/mac/`). Native look-and-feel, Keychain-secured API key storage.
+- **MacOS build** — Community-contributed MacOS port (`src/mac/`). Native look-and-feel, Keychain-secured API key storage.
 
 ### Notification Previews
 
@@ -51,7 +51,7 @@ Grab the latest files from [Releases](https://github.com/wenyinos/DeepSeekBalanc
 - Python build: Windows 10+, Python 3.10+
 - Rust Windows build: Windows 7 SP1 / Server 2008 R2 SP1 with all official updates, Windows 8.1 / Server 2012 R2, Windows 10, or Windows 11
 - Rust Linux build: RHEL 8 / Ubuntu 20.04 era glibc or newer; KDE Plasma 6.0+ for the optional widget
-- macOS build: macOS 10.14+, Python 3.10+
+- MacOS build: MacOS 10.14+, Python 3.10+
 
 ### Windows 7/8.1 Root Certificates
 
@@ -113,7 +113,7 @@ dsmon history export [days] [currency|all] [path|-]
 dsmon widget-status
 ```
 
-**macOS (`src/mac/`):**
+**MacOS (`src/mac/`):**
 
 ```bash
 cd src/mac
@@ -123,13 +123,13 @@ bash ../scripts/build_mac.sh
 
 ### Python vs Rust
 
-| | Python Windows | Rust Windows | Rust Linux | Python macOS |
+| | Python Windows | Rust Windows | Rust Linux | Python MacOS |
 |---|---|---|---|---|
 | Runtime | Python + pystray + Tkinter | Native Rust + native-windows-gui | Native Rust CLI | Python + rumps + tkinter |
-| Min OS | Windows 10+ | Windows 7 SP1+ | RHEL 8 / Ubuntu 20.04 era glibc | macOS 10.14+ |
+| Min OS | Windows 10+ | Windows 7 SP1+ | RHEL 8 / Ubuntu 20.04 era glibc | MacOS 10.14+ |
 | First launch (no key) | Opens settings dialog | Opens `config.json` in editor | Prints config path and creates config | Opens settings window |
 | Auto-start | Registry Run key | Startup folder shortcut | systemd user service | Login items |
-| API key storage | config.json | config.json | config.json | macOS Keychain |
+| API key storage | config.json | config.json | config.json | MacOS Keychain |
 
 ## Project Structure
 
@@ -141,7 +141,9 @@ DeepSeekBalance/
 │   ├── icon_renderer.py
 │   ├── app_state.py
 │   ├── settings_dialog.py
-│   └── tray_app.py
+│   ├── tray_app.py
+│   ├── credential_store.py
+│   └── storage.py
 ├── src/mac/                    # Native MacOS port
 │   ├── main.py
 │   ├── settings.py
@@ -151,10 +153,15 @@ DeepSeekBalance/
 │   ├── build_mac.sh
 │   ├── setup.bat
 │   ├── update_windows_root_certs.bat
-│   └── run_silent.vbs
+│   ├── run_silent.vbs
+│   └── demo.vbs
+├── assets/                     # Icons, previews, fonts
+│   ├── app.ico
+│   ├── AppIcon.icns / .png
+│   ├── preview.png / preview_zh.png
+│   └── font/
 ├── rust-windows/               # Native Rust Windows port
 │   ├── src/main.rs
-│   ├── app.ico
 │   ├── app.manifest
 │   └── build.rs
 ├── rust-linux/                # Rust Linux CLI and Plasma 6 widget
@@ -212,20 +219,36 @@ Rust Windows and Rust Linux store balance history in `balance_history.db` next t
 
 ### v1.1
 
-- API service status polling with dedicated icon colour and change notifications
-- Three alert modes: never, always, or once per drop (default: once)
-- Top-up menu item
-- SQLite balance history for Rust Windows and Rust Linux
-- History chart, days/currency filters, and CSV export in Rust Windows settings and the Plasma widget
-- `dsmon history` summary and `dsmon history export` for Linux CLI
+**Added**
+
+- API service status polling via `status.deepseek.com`. Tray icon turns warm gray when API is degraded; status changes trigger independent desktop notifications
+- "Top Up" menu item that opens `platform.deepseek.com/top_up` in the browser
+- SQLite balance history storage across all builds with configurable log & record retention (default 30 days)
+- GitHub Actions CI auto-builds and attaches `DeepSeekBalanceMonitor.exe` to each release
+- Community-contributed ports: Rust-Win (native Rust, Win7+), Rust-Linux (CLI + Plasma 6 widget), Py-Mac (native MacOS, Keychain-secured)
+- Rust builds: history chart, days/currency filters, CSV export, `dsmon history` / `dsmon history export` CLI commands
 - Plasma widget daemon start/stop action with command-error notifications
-- Win7/8.1 root certificate update helper script
-- Log & record retention with configurable cleanup
-- GitHub Actions auto-build for Python releases
-- Community ports: Rust-Win (Win7+), Py-Mac
-- Refined notification layout
-- Settings input validation
-- Removed third-party HTTP dependency (stdlib only)
+- Windows 7/8.1 root certificate update helper script
+
+**Changed**
+
+- Low balance alerts: three modes (never / always / once per drop), configured via dropdown, default once
+- Redesigned balance detail notification card: fixed title, inline breakdown, service status line always visible
+- Settings dialog validates all numeric inputs on save and shows a warning for out-of-range values
+
+**Technical**
+
+- Replaced `requests` with Python stdlib `urllib.request`
+
+### Upcoming (already on `main`, pending next release)
+
+- Windows Credential Manager integration: API keys are stored encrypted via the system credential store instead of plaintext `config.json`
+- Demo mode (`--demo`) with a developer tools panel for interactively testing balance levels, error states, and API status scenarios
+- Custom icon colour themes: 5 presets (Default, High Contrast, Bright, Dark Mode, Monochrome) + custom hex colour editor with live preview in settings
+- Configurable icon stroke (width, opacity, auto-matching text colour)
+- History viewer: paginated table of all balance records, with interactive trend chart and consumption rate analysis
+- Consumption rate estimation: daily average spend and projected days remaining, shown in both the balance notification and history viewer
+- API service status now recorded alongside each balance entry in the local database
 
 ## License
 

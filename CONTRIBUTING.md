@@ -13,6 +13,9 @@
 | `alert_mode` | string | `"once"` | `"never"` / `"always"` / `"once"` |
 | `api_alert_enabled` | bool | `true` | |
 | `retention_days` | int | `30` | 1–3650 |
+| `theme` | string | `"default"` | `"default"` / `"contrast"` / `"bright"` / `"dark_mode"` / `"mono"` / `"custom"` |
+| `icon_colors` | object | `{}` | `{"ok":"3C6966","low":"B9463C","degraded":"78695A","nodata":"69696E"}` - only used when `theme` is `"custom"` |
+| `icon_stroke` | bool | `false` | icon outline colour matches text (white/black based on background) |
 | `auto_start` | bool | `false` | |
 
 ## Notification Format
@@ -53,6 +56,8 @@ DeepSeek API 服务状态：🟢 服务正常   ← 常驻
 - **余额查询容错**：查询失败时若 API 服务已知异常，不清空已有余额数据、不设错误状态
 - **低余额提醒**：从二元开关变为三选一下拉，模式切换时 `_alert_suppressed` 状态位自动复位。`"never"` 模式下切回会重新触发
 - **右键充值**：托盘菜单新增一项，跳转 `platform.deepseek.com/top_up`
+- **Windows 凭据管理器**：API Key 优先从 Windows Credential Manager 读取（加密存储），`config.json` 作为 fallback。移植版需兼容：`load_config()` 在加载文件后尝试 `read_credential()`，有值时覆盖 `api_key` 字段
+- **Demo 模式**：`--demo` 启动参数跳过真实 API 调用，使用预设数据。Demo 模式下 `app.demo_mode = True`，托盘菜单额外显示「开发者」选项，打开后可自由调节余额、错误状态、API 状态等参数
 
 ### i18n
 
@@ -79,6 +84,7 @@ DeepSeek API 服务状态：🟢 服务正常   ← 常驻
 | `bal_title` | DeepSeek 余额： | DeepSeek Balance: |
 | `bal_line` | {balance} {code}（充值 {topped}，赠送 {granted}） | {balance} {code} (Topped {topped}, Granted {granted}) |
 | `retention_label` | 日志和记录保留天数： | Log & record retention (days): |
+| `dev_tools` | 🛠 开发者 | 🛠 Dev Tools |
 
 ### Removed i18n Keys
 

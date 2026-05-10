@@ -42,7 +42,7 @@ def open_settings(app):
                 icon_path = os.path.join(sys._MEIPASS, "app.ico")
             else:
                 icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                         "app.ico")
+                                         "assets", "app.ico")
             if os.path.isfile(icon_path):
                 root.iconbitmap(icon_path)
         except Exception:
@@ -167,6 +167,101 @@ def open_settings(app):
         ttk.Checkbutton(scroll_frame, text=T("api_alert_label", lang),
                         variable=api_alert_var).pack(anchor="w", pady=(0, 8))
 
+        ttk.Separator(scroll_frame, orient="horizontal").pack(fill="x", pady=5)
+        ttk.Label(scroll_frame, text=T("theme_label", lang)).pack(anchor="w")
+
+        from src.icon_renderer import THEMES, _hex_to_rgba, _text_color, create_icon_image
+
+        THEME_KEYS = ["default", "contrast", "bright", "dark_mode", "mono", "custom"]
+        THEME_OPTS = ["theme_default", "theme_contrast", "theme_bright",
+                      "theme_dark_mode", "theme_mono", "theme_custom"]
+        theme_display = [T(k, lang) for k in THEME_OPTS]
+
+        if lang == "zh":
+            PREVIEW_LABELS = {"ok": "正常", "low": "低额", "degraded": "异常", "nodata": "等待"}
+            CUSTOM_LABELS = {"ok": "正常", "low": "低额", "degraded": "异常", "nodata": "等待"}
+        else:
+            PREVIEW_LABELS = {"ok": "OK", "low": "Low", "degraded": "Deg", "nodata": "..."}
+            CUSTOM_LABELS = {"ok": "OK", "low": "Low", "degraded": "Degraded", "nodata": "No Data"}
+
+        cur_theme = app.config.get("theme", "default")
+        cur_theme_idx = THEME_KEYS.index(cur_theme) if cur_theme in THEME_KEYS else 0
+
+        # Color preview row - goes ABOVE the dropdown
+        preview_frame = ttk.Frame(scroll_frame)
+        preview_frame.pack(fill="x", pady=(4, 6))
+        color_labels = {}
+
+        def _refresh_preview(*_args):
+            idx = theme_display.index(theme_var.get()) if theme_var.get() in theme_display else 0
+            tk_theme = THEME_KEYS[idx]
+            colors = THEMES.get(tk_theme, THEMES["default"])
+            for k, lbl in color_labels.items():
+                c = colors[k]
+                hex_color = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+                tc = _text_color(c)
+                lbl.configure(background=hex_color, foreground=_tk_color(tc))
+
+        def _tk_color(rgba):
+            return f"#{rgba[0]:02x}{rgba[1]:02x}{rgba[2]:02x}"
+
+        for i, k in enumerate(("ok", "low", "degraded", "nodata")):
+            c = THEMES["default"][k]
+            hex_color = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+            tc = _text_color(c)
+            lbl = tk.Label(preview_frame, text=PREVIEW_LABELS[k], bg=hex_color,
+                           fg=_tk_color(tc), font=("Segoe UI", 8, "bold"),
+                           width=6, height=1, relief="ridge")
+            lbl.pack(side="left", padx=(0 if i == 0 else 3, 0))
+            color_labels[k] = lbl
+
+        theme_var = tk.StringVar(value=theme_display[cur_theme_idx])
+        theme_var.trace_add("write", _refresh_preview)
+        _refresh_preview()
+
+        theme_combo = ttk.Combobox(scroll_frame, textvariable=theme_var,
+                                   values=theme_display, state="readonly", width=14)
+        theme_combo.pack(anchor="w", pady=(0, 4))
+
+        stroke_var = tk.BooleanVar(value=app.config.get("icon_stroke", True))
+        ttk.Checkbutton(scroll_frame, text=T("icon_stroke_label", lang),
+                        variable=stroke_var).pack(anchor="w", pady=(0, 6))
+
+        # Custom color inputs (hidden unless "custom" selected)
+        custom_frame = ttk.Frame(scroll_frame)
+        custom_vars = {}
+        for k in ("ok", "low", "degraded", "nodata"):
+            row = ttk.Frame(custom_frame)
+            row.pack(fill="x", pady=(0, 3))
+            ttk.Label(row, text=CUSTOM_LABELS[k], width=7).pack(side="left")
+            v = tk.StringVar()
+            custom_vars[k] = v
+            ttk.Label(row, text="#", foreground="gray").pack(side="left")
+            e = ttk.Entry(row, textvariable=v, width=8)
+            e.pack(side="left")
+
+        def _on_theme_change(*_args):
+            idx = theme_display.index(theme_var.get()) if theme_var.get() in theme_display else 0
+            tk_theme = THEME_KEYS[idx]
+            if tk_theme == "custom":
+                colors = THEMES["default"]
+                for k, v in custom_vars.items():
+                    c = colors[k]
+                    v.set(f"{c[0]:02x}{c[1]:02x}{c[2]:02x}")
+                custom_frame.pack(fill="x", pady=(0, 6), after=theme_combo)
+            else:
+                custom_frame.pack_forget()
+
+        theme_var.trace_add("write", _on_theme_change)
+
+        # Show custom inputs on open if already in custom mode
+        if cur_theme == "custom":
+            colors = THEMES["default"]
+            saved = app.config.get("icon_colors", {})
+            for k, v in custom_vars.items():
+                v.set(saved.get(k, f"{colors[k][0]:02x}{colors[k][1]:02x}{colors[k][2]:02x}"))
+            custom_frame.pack(fill="x", pady=(0, 6), after=theme_combo)
+
         ttk.Label(scroll_frame, text=T("language_label", lang)).pack(anchor="w", pady=(2, 0))
         LANG_OPTIONS = {"中文": "zh", "English": "en"}
         LANG_DISPLAY = list(LANG_OPTIONS.keys())
@@ -193,7 +288,7 @@ def open_settings(app):
         # Prevent accidental value changes via mousewheel on spinboxes and
         # comboboxes — these are too easy to bump while scrolling the dialog.
         _no_scroll = lambda e: "break"
-        for w in (interval_sb, threshold_sb, alert_mode_combo, lang_combo, retention_sb):
+        for w in (interval_sb, threshold_sb, alert_mode_combo, theme_combo, lang_combo, retention_sb):
             w.bind("<MouseWheel>", _no_scroll)
 
         ttk.Separator(scroll_frame, orient="horizontal").pack(fill="x", pady=(12, 8))
@@ -264,6 +359,12 @@ def open_settings(app):
                 return
 
             app.config["api_key"] = key
+            try:
+                from src.credential_store import store_credential
+                store_credential(key)
+            except ImportError:
+                pass
+
             app.config["interval_minutes"] = interval
             app.config["threshold_yuan"] = threshold
             app.config["language"] = LANG_OPTIONS.get(lang_var.get(), "zh")
@@ -271,12 +372,21 @@ def open_settings(app):
             app.config["alert_mode"] = alert_mode_map.get(alert_mode_var.get(), "always")
             app.config["api_alert_enabled"] = api_alert_var.get()
             app.config["retention_days"] = retention
+
+            t_idx = theme_display.index(theme_var.get()) if theme_var.get() in theme_display else 0
+            t_key = THEME_KEYS[t_idx]
+            app.config["theme"] = t_key
+            if t_key == "custom":
+                app.config["icon_colors"] = {k: v.get().strip() for k, v in custom_vars.items()}
+            else:
+                app.config["icon_colors"] = {}
+            app.config["icon_stroke"] = stroke_var.get()
+
             set_auto_start(app.config["auto_start"])
             save_config(app.config)
             app.cancel_timer()
-            # Language may have changed — rebuild the tray menu so it
-            # reflects the new locale immediately.
             if app.icon:
+                app.icon.icon = create_icon_image(app)
                 app.icon.menu = make_menu(app)
             threading.Thread(target=do_balance_check, args=(app,), daemon=True).start()
             log("Settings saved")

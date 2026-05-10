@@ -46,9 +46,9 @@ pyinstaller ^
     --windowed ^
     --noconsole ^
     --name "DeepSeekBalanceMonitor" ^
-    --icon app.ico ^
+    --icon assets/app.ico ^
     --paths src ^
-    --add-data "app.ico;." ^
+    --add-data "assets/app.ico;." ^
     --version-file version_info.txt ^
     --clean ^
     main.py

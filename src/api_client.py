@@ -1,5 +1,5 @@
 """
-DeepSeek API client — fetches account balance from the DeepSeek API.
+DeepSeek API client - fetches account balance from the DeepSeek API.
 """
 import json
 import urllib.request
@@ -23,9 +23,6 @@ def fetch_balance(api_key: str) -> dict:
     Raises PermissionError on 401, URLError/HTTPError on other failures,
     ValueError if the response contains no balance_infos.
     """
-    # HTTP headers must be Latin-1 (RFC 7230 §3.2).  Any character
-    # outside Latin-1 in the API key will crash http.client.putheader()
-    # with UnicodeEncodeError before the request ever leaves the machine.
     api_key = api_key.encode("latin-1", errors="ignore").decode("latin-1")
 
     url = "https://api.deepseek.com/user/balance"
@@ -58,9 +55,7 @@ def fetch_balance(api_key: str) -> dict:
 def fetch_service_status():
     """Fetch DeepSeek service status from status.deepseek.com.
     Returns dict {"indicator": str, "api_operational": bool},
-    or None on failure.  The API component is checked specifically
-    — the overall indicator may report minor/major even when the
-    API itself is fine (e.g. website outage)."""
+    or None on failure."""
     try:
         headers = {"User-Agent": "DeepSeekBalanceMonitor/1.0"}
         data = _get_json(

@@ -22,6 +22,7 @@ class AppState:
         self._settings_window = None
         self._alert_suppressed = False
         self._api_was_operational = True
+        self.demo_mode = False
 
     @property
     def lang(self):

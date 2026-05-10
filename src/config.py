@@ -44,6 +44,9 @@ DEFAULT_CONFIG = {
     "alert_mode": "once",    # "never" | "always" | "once"
     "api_alert_enabled": True,
     "retention_days": 30,
+    "theme": "default",
+    "icon_colors": {},
+    "icon_stroke": False,
     "auto_start": False,
 }
 
@@ -57,8 +60,18 @@ _T = {
         "view_balance":     "📋 查看余额",
         "check_now":        "🔄 立即查询",
         "top_up":           "💰 充值",
+        "history":          "📊 历史记录",
         "settings":         "⚙️ 设置…",
         "quit":             "❌ 退出",
+        "dev_tools":        "🛠 开发者",
+        "theme_label":      "图标主题：",
+        "theme_default":    "默认",
+        "theme_contrast":   "高对比",
+        "theme_bright":     "明亮",
+        "theme_dark_mode":  "暗色模式",
+        "theme_mono":       "纯灰度",
+        "theme_custom":     "自定义",
+        "icon_stroke_label": "图标描边",
         "settings_title":   "DeepSeek Balance Monitor — 设置",
         "api_key_label":    "DeepSeek API Key:",
         "show_key":         "显示 API Key",
@@ -109,8 +122,18 @@ _T = {
         "view_balance":     "📋 View Balance",
         "check_now":        "🔄 Check Now",
         "top_up":           "💰 Top Up",
+        "history":          "📊 History",
         "settings":         "⚙️ Settings…",
         "quit":             "❌ Quit",
+        "dev_tools":        "🛠 Dev Tools",
+        "theme_label":      "Icon Theme:",
+        "theme_default":    "Default",
+        "theme_contrast":   "High Contrast",
+        "theme_bright":     "Bright",
+        "theme_dark_mode":  "Dark Mode",
+        "theme_mono":       "Monochrome",
+        "theme_custom":     "Custom",
+        "icon_stroke_label": "Icon stroke",
         "settings_title":   "DeepSeek Balance Monitor — Settings",
         "api_key_label":    "DeepSeek API Key:",
         "show_key":         "Show API Key",
@@ -178,15 +201,31 @@ def load_config() -> dict:
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 cfg = {**DEFAULT_CONFIG, **json.load(f)}
-            # Migrate legacy enable_alerts boolean → alert_mode string
             if "enable_alerts" in cfg:
                 if "alert_mode" not in cfg or cfg["alert_mode"] == DEFAULT_CONFIG["alert_mode"]:
                     cfg["alert_mode"] = "always" if cfg["enable_alerts"] else "never"
                 del cfg["enable_alerts"]
+            try:
+                from src.credential_store import read_credential
+                key = read_credential()
+                if key:
+                    cfg["api_key"] = key
+            except ImportError:
+                pass
             return cfg
         except Exception as e:
             log(f"Failed to load config: {e}")
-    return DEFAULT_CONFIG.copy()
+
+    # No config file yet - still try credential store
+    cfg = DEFAULT_CONFIG.copy()
+    try:
+        from src.credential_store import read_credential
+        key = read_credential()
+        if key:
+            cfg["api_key"] = key
+    except ImportError:
+        pass
+    return cfg
 
 def save_config(config: dict) -> None:
     try:

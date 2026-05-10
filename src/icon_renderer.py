@@ -5,14 +5,61 @@ from PIL import Image, ImageDraw, ImageFont
 
 from src.config import log
 
-_ICON_OK     = (60, 105, 102, 255)  # teal
-_ICON_RED    = (185, 70, 60, 255)
-_ICON_GRAY   = (105, 105, 110, 255)
-_ICON_RADIUS = 12
+_RADIUS = 12
 
-# Gray with a subtle warm tint — distinguishes "API degraded"
-# from "no data" at a glance while still reading as uncertain.
-_ICON_WARN   = (120, 105, 90, 255)
+THEMES = {
+    "default": {
+        "ok":       (60, 105, 102, 255),
+        "low":      (185, 70, 60, 255),
+        "degraded": (120, 105, 90, 255),
+        "nodata":   (105, 105, 110, 255),
+    },
+    "contrast": {
+        "ok":       (45, 128, 116, 255),
+        "low":      (212, 52, 46, 255),
+        "degraded": (139, 105, 20, 255),
+        "nodata":   (85, 85, 85, 255),
+    },
+    "bright": {
+        "ok":       (200, 235, 230, 255),
+        "low":      (245, 210, 205, 255),
+        "degraded": (235, 220, 205, 255),
+        "nodata":   (215, 215, 220, 255),
+    },
+    "dark_mode": {
+        "ok":       (80, 155, 148, 255),
+        "low":      (215, 100, 90, 255),
+        "degraded": (155, 140, 115, 255),
+        "nodata":   (125, 125, 130, 255),
+    },
+    "mono": {
+        "ok":       (85, 85, 85, 255),
+        "low":      (34, 34, 34, 255),
+        "degraded": (119, 119, 119, 255),
+        "nodata":   (153, 153, 153, 255),
+    },
+}
+
+
+def _text_color(rgb):
+    lum = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
+    return (0, 0, 0, 255) if lum > 170 else (255, 255, 255, 255)
+
+
+def _hex_to_rgba(hex_str):
+    v = int(hex_str.strip("#"), 16)
+    return ((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF, 255)
+
+
+def _get_colors(config):
+    theme = config.get("theme", "default")
+    if theme == "custom":
+        custom = config.get("icon_colors", {})
+        def _c(k):
+            h = custom.get(k, "")
+            return _hex_to_rgba(h) if len(h) == 6 else THEMES["default"][k]
+        return {k: _c(k) for k in ("ok", "low", "degraded", "nodata")}
+    return THEMES.get(theme, THEMES["default"])
 
 
 def _draw_rounded_rect(draw, xy, radius, **kwargs):
@@ -35,7 +82,7 @@ def create_icon_image(app):
 
 def _create_icon_image_impl(app):
     size = 64
-    radius = _ICON_RADIUS
+    radius = _RADIUS
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
@@ -45,28 +92,34 @@ def _create_icon_image_impl(app):
         b = app.get_preferred_balance()
         st = app.service_status
 
+    colors = _get_colors(app.config)
+
     if err:
-        fill = _ICON_RED
+        fill = colors["low"]
         label = "!"
     elif b is None:
-        fill = _ICON_GRAY
+        fill = colors["nodata"]
         label = "..."
     else:
         val = int(b["total_balance"])
         api_ok = st is None or st.get("api_operational", True)
         if not api_ok:
-            fill = _ICON_WARN
+            fill = colors["degraded"]
         elif app.is_low_balance():
-            fill = _ICON_RED
+            fill = colors["low"]
         else:
-            fill = _ICON_OK
+            fill = colors["ok"]
         label = str(val) if val <= 99 else "OK"
+
+    text_fill = _text_color(fill)
 
     margin = 0
     _draw_rounded_rect(draw, [margin, margin, size - margin, size - margin],
                        radius=radius, fill=fill)
-    _draw_rounded_rect(draw, [margin, margin, size - margin, size - margin],
-                       radius=radius, outline=(255, 255, 255, 60), width=1)
+    if app.config.get("icon_stroke", False):
+        stroke = text_fill[:3] + (180,)
+        _draw_rounded_rect(draw, [margin, margin, size - margin, size - margin],
+                           radius=radius, outline=stroke, width=5)
 
     font_size = 48 if len(label) <= 1 else (44 if len(label) == 2 else 38)
     try:
@@ -84,6 +137,6 @@ def _create_icon_image_impl(app):
                     font = ImageFont.load_default()
 
     draw.text((size / 2, size / 2), label,
-              fill=(255, 255, 255, 255), font=font, anchor="mm")
+              fill=text_fill, font=font, anchor="mm")
 
     return img

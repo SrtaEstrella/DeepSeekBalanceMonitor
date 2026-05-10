@@ -4,7 +4,7 @@
 
 [English](README.md)
 
-![preview](preview_zh.png)
+![preview](assets/preview_zh.png)
 
 **Linux Plasma 小组件预览**
 桌面小组件仅适用于 KDE Plasma 6 桌面环境。
@@ -23,7 +23,7 @@
 - **Rust Linux 版** — `dsmon` 命令行守护进程（`rust-linux/`），支持 systemd 用户服务、日志保留和可选 KDE Plasma 6 小组件。
 - **余额历史** — Rust 版使用 SQLite 保存余额历史，在设置页展示趋势统计，并支持 CSV 导出。
 - **Plasma 小组件集成** — Linux 小组件从 `dsmon` 命令读取状态，可启动 / 退出守护进程，并通过桌面通知显示命令错误。
-- **macOS 版** — 社区贡献的 macOS 移植（`src/mac/`）。原生外观，Keychain 加密存储 API Key。
+- **MacOS 版** — 社区贡献的 MacOS 移植（`src/mac/`）。原生外观，Keychain 加密存储 API Key。
 
 ### 通知预览
 
@@ -51,7 +51,7 @@
 - Python 版：Windows 10+，Python 3.10+
 - Rust Windows 版：安装所有官方更新的 Windows 7 SP1 / Server 2008 R2 SP1、Windows 8.1 / Server 2012 R2、Windows 10 或 Windows 11
 - Rust Linux 版：RHEL 8 / Ubuntu 20.04 同时代或更新 glibc；可选小组件需要 KDE Plasma 6.0+
-- macOS 版：macOS 10.14+，Python 3.10+
+- MacOS 版：MacOS 10.14+，Python 3.10+
 
 ### Windows 7/8.1 根证书说明
 
@@ -113,7 +113,7 @@ dsmon history export [days] [currency|all] [path|-]
 dsmon widget-status
 ```
 
-**macOS（`src/mac/`）：**
+**MacOS（`src/mac/`）：**
 
 ```bash
 cd src/mac
@@ -123,13 +123,13 @@ bash ../scripts/build_mac.sh
 
 ### Python 版与 Rust 版对比
 
-| | Python Windows 版 | Rust Windows 版 | Rust Linux 版 | Python macOS 版 |
+| | Python Windows 版 | Rust Windows 版 | Rust Linux 版 | Python MacOS 版 |
 |---|---|---|---|---|
 | 运行时 | Python + pystray + Tkinter | 原生 Rust + native-windows-gui | 原生 Rust 命令行 | Python + rumps + tkinter |
-| 最低系统 | Windows 10+ | Windows 7 SP1+ | RHEL 8 / Ubuntu 20.04 同时代 glibc | macOS 10.14+ |
+| 最低系统 | Windows 10+ | Windows 7 SP1+ | RHEL 8 / Ubuntu 20.04 同时代 glibc | MacOS 10.14+ |
 | 首次无 Key | 弹出设置窗口 | 打开 `config.json` 编辑 | 输出配置路径并创建配置 | 弹出设置窗口 |
 | 开机自启 | 注册表 Run 键 | 启动文件夹快捷方式 | systemd 用户服务 | 登录项 |
-| API Key 存储 | config.json | config.json | config.json | macOS Keychain |
+| API Key 存储 | config.json | config.json | config.json | MacOS Keychain |
 
 ## 项目结构
 
@@ -141,7 +141,9 @@ DeepSeekBalance/
 │   ├── icon_renderer.py
 │   ├── app_state.py
 │   ├── settings_dialog.py
-│   └── tray_app.py
+│   ├── tray_app.py
+│   ├── credential_store.py
+│   └── storage.py
 ├── src/mac/                    # 原生 MacOS 移植
 │   ├── main.py
 │   ├── settings.py
@@ -151,10 +153,15 @@ DeepSeekBalance/
 │   ├── build_mac.sh
 │   ├── setup.bat
 │   ├── update_windows_root_certs.bat
-│   └── run_silent.vbs
+│   ├── run_silent.vbs
+│   └── demo.vbs
+├── assets/                     # 图标、预览图、字体
+│   ├── app.ico
+│   ├── AppIcon.icns / .png
+│   ├── preview.png / preview_zh.png
+│   └── font/
 ├── rust-windows/              # 原生 Rust Windows 版
 │   ├── src/main.rs
-│   ├── app.ico
 │   ├── app.manifest
 │   └── build.rs
 ├── rust-linux/                # Rust Linux 命令行与 Plasma 6 小组件
@@ -212,20 +219,36 @@ Rust Windows 和 Rust Linux 会在各自应用数据目录保存 `balance_histor
 
 ### v1.1
 
-- API 服务状态轮询，独立图标配色与变化提醒
-- 低余额提醒三选一：不提醒 / 持续提醒 / 仅提醒一次（默认）
-- 充值直达
-- Rust Windows 和 Rust Linux 使用 SQLite 保存余额历史
-- Rust Windows 设置页和 Plasma 小组件支持历史图表、天数 / 币种筛选与 CSV 导出
-- Linux CLI 新增 `dsmon history` 统计和 `dsmon history export` 导出
-- Plasma 小组件右键可启动 / 退出守护进程，并在失败时显示命令错误通知
-- Win7/8.1 根证书更新辅助脚本
-- 日志与记录可配置自动清理
-- GitHub Actions 自动构建
-- 社区移植：Rust-Win（Win7+）、Py-Mac
-- 通知卡片重构
-- 设置输入校验
-- 移除第三方 HTTP 依赖
+**新增**
+
+- 接入 `status.deepseek.com` 实时查询 API 服务状态。API 异常时托盘图标显示暖灰色，状态翻转时弹出独立桌面通知
+- 托盘右键菜单新增「充值」，一键跳转 DeepSeek 开放平台充值页面
+- SQLite 余额历史存储，日志与记录自动清理（默认保留 30 天）
+- GitHub Actions 自动构建并发布到 Release 页面
+- 社区移植版本：Rust-Win（原生 Rust，Win7+）、Rust-Linux（CLI + Plasma 6 小组件）、Py-Mac（原生 MacOS，Keychain 加密）
+- Rust 版支持历史图表、天数/币种筛选、CSV 导出和 `dsmon history` CLI 命令
+- Plasma 小组件右键可启动/退出守护进程，命令失败时弹出桌面通知
+- Windows 7/8.1 根证书更新辅助脚本
+
+**变更**
+
+- 低余额提醒改为三选一下拉菜单：不提醒 / 持续提醒 / 仅提醒一次，默认仅一次
+- 余额详情通知卡片重新设计：标题固定、余额明细内嵌、API 服务状态行常驻
+- 设置页保存时校验所有数值输入范围，非法输入弹出明确警告提示
+
+**技术**
+
+- 移除 `requests`，全部改用 Python 标准库 `urllib.request`
+
+### 即将推出（源码已实现，待下一次 release）
+
+- API Key 加密存入 Windows 凭据管理器
+- Demo 模式（`--demo`），可调出开发者面板测试各种状态场景
+- 自定义图标配色：5 套预置主题（默认/高对比/明亮/暗色模式/纯灰度）+ 自定义 hex 颜色，设置页实时预览
+- 图标描边开关（宽度、透明度，颜色跟随文字自适应）
+- 历史记录页：分页表格展示所有余额记录，附带趋势折线图和消耗速率分析
+- 消耗速率估算：日均消耗与预计可用天数/小时，在余额通知和历史记录页中同步显示
+- API 服务状态同步写入本地数据库，每次余额查询附带记录
 
 ## 协议
 
