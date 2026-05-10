@@ -108,8 +108,6 @@ DeepSeek API 服务状态：🟢 服务正常        ← 常驻
 - **新增** `theme: string`，默认 `"default"`。可选 `"contrast"` / `"bright"` / `"dark_mode"` / `"mono"` / `"custom"`
 - **新增** `icon_colors: object`，仅在 `theme: "custom"` 时生效，含 `ok`/`low`/`degraded`/`nodata` 四个 6 位 hex 值
 - **新增** `icon_stroke: bool`，默认 `false`。描边颜色随文字自适应（白底黑字 vs 黑底白字）
-- `auto_start` 默认值改为 `false`（原 Rust 版为 `true`，统一为 `false`）
-
 ### Behaviour
 
 - **自定义图标配色**：5 套预置主题 + custom 模式，`_get_colors(config)` 统一读取。托盘文字和描边颜色基于背景亮度自选黑白（阈值 170）
