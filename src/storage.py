@@ -1,6 +1,7 @@
 """
 Balance history storage — SQLite-backed, for spend-rate / trend analysis.
 """
+import csv
 import sqlite3
 from datetime import datetime
 
@@ -91,6 +92,28 @@ def get_history_page(limit: int = 100, offset: int = 0):
     except Exception as e:
         log(f"Failed to read history page: {e}")
         return []
+
+
+def export_all_csv(path: str) -> int:
+    """Export all balance records to a CSV file. Returns row count."""
+    try:
+        conn = _connect()
+        cur = conn.execute(
+            "SELECT timestamp, currency, total, topped, granted, service_status "
+            "FROM balance_history ORDER BY timestamp ASC"
+        )
+        count = 0
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.writer(f)
+            w.writerow(["timestamp", "currency", "total", "topped", "granted", "service_status"])
+            for r in cur:
+                w.writerow(r)
+                count += 1
+        conn.close()
+        return count
+    except Exception as e:
+        log(f"Failed to export CSV: {e}")
+        return 0
 
 
 def get_consumption_rate(days=7):

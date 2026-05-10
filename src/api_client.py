@@ -5,6 +5,20 @@ import json
 import urllib.request
 import urllib.error
 
+_proxy_installed = False
+
+
+def install_proxy(proxy_url: str):
+    """Install a global HTTP/HTTPS proxy. Call once before any requests.
+    Pass empty string to clear."""
+    global _proxy_installed
+    if proxy_url:
+        handler = urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+        urllib.request.install_opener(urllib.request.build_opener(handler))
+    elif _proxy_installed:
+        urllib.request.install_opener(urllib.request.build_opener(urllib.request.ProxyHandler({})))
+    _proxy_installed = True
+
 
 def _get_json(url, headers=None, timeout=15):
     """GET a JSON endpoint. Returns parsed dict, or raises HTTPError on

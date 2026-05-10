@@ -6,7 +6,7 @@
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `api_key` | string | `""` | |
+| `api_key` | string | `""` | deprecated — stored in system credential manager, config.json holds `""` as fallback |
 | `interval_minutes` | int | `10` | 1–1440 |
 | `threshold_yuan` | float | `1.0` | 0–10000 |
 | `language` | string | `"zh"` | `"zh"` or `"en"` |
@@ -16,18 +16,20 @@
 | `theme` | string | `"default"` | `"default"` / `"contrast"` / `"bright"` / `"dark_mode"` / `"mono"` / `"custom"` |
 | `icon_colors` | object | `{}` | `{"ok":"3C6966","low":"B9463C","degraded":"78695A","nodata":"69696E"}` - only used when `theme` is `"custom"` |
 | `icon_stroke` | bool | `false` | icon outline colour matches text (white/black based on background) |
+| `export_path` | string | `""` | directory for CSV exports; empty = ask on export |
+| `http_proxy` | string | `""` | HTTP/HTTPS proxy URL, e.g. `http://127.0.0.1:7890` |
 | `auto_start` | bool | `false` | |
 
 ## Notification Format
 
-点击图标查看余额的通知卡片格式（标题 + 多行正文）：
+点击图标查看余额的通知卡片格式（标题 + 多行正文，每行有 emoji 前缀）：
 
 ```
-DeepSeek 余额：                         ← 固定标题
-12.34 CNY（充值 10.00，赠送 2.34）      ← 有余额时显示此行
-日均消耗 1.50 CNY  |  预计可用 28 天 4 小时 ← 有足够历史数据时显示
-上次查询: 2026-05-08 14:30:00           ← 正常 / 查询出错: xxx / 尚未查询
-DeepSeek API 服务状态：🟢 服务正常        ← 常驻
+DeepSeek 余额：                              ← 固定标题
+💰 12.34 CNY（充值 10.00，赠送 2.34）        ← 有余额时显示
+📊 日均消耗 1.50 | 预计可用 28 天 4 小时  ← 有历史数据时显示
+📡 API 服务状态：🟢 服务正常          ← 常驻，emoji 为双指示器
+🕐 上次查询：5 分钟前                          ← 仅显示相对时间
 ```
 
 ## API Endpoints
@@ -95,18 +97,21 @@ DeepSeek API 服务状态：🟢 服务正常        ← 常驻
 
 - **新增** `theme: string`，默认 `"default"`。可选 `"contrast"` / `"bright"` / `"dark_mode"` / `"mono"` / `"custom"`
 - **新增** `icon_colors: object`，仅在 `theme: "custom"` 时生效，含 `ok`/`low`/`degraded`/`nodata` 四个 6 位 hex 值
-- **新增** `icon_stroke: bool`，默认 `false`。描边颜色随文字自适应（白底黑字 vs 黑底白字）
+- **新增** `icon_stroke: bool`，默认 `false`。描边颜色随文字自适应
+- **新增** `export_path: string`，CSV 导出目录。空时弹保存对话框
+- **新增** `http_proxy: string`，HTTP/HTTPS 代理地址。启动时通过 `urllib.request.ProxyHandler` 全局安装
 
 ### Behaviour
 
-- **自定义图标配色**：5 套预置主题 + custom 模式，`_get_colors(config)` 统一读取。托盘文字和描边颜色基于背景亮度自选黑白（阈值 170）
-- **Windows 凭据管理器**：`load_config()` 在加载文件后尝试 `read_credential()`，无 config.json 时也尝试。`on_save` 同步写入
-- **Demo 模式**：`--demo` 启动，`app.demo_mode = True`，`do_balance_check` 使用预设数据。右键菜单新增「🛠 开发者」面板
-- **历史记录页**：右键新增「📊 历史记录」，Treeview 分页表格 + Canvas 折线图 + 消耗速率标签。数据从 `get_history_page(limit, offset)` 和 `get_consumption_rate()` 获取
-- **消耗速率**：`get_consumption_rate()` 从 topped 余额计算非递增子区间的平均日消耗和预估剩余天数/小时。余额通知和历史页同步显示
+- **自定义图标配色**：5 套预置主题 + custom 模式，`_get_colors(config)` 统一读取。托盘文字和描边颜色基于背景亮度自选黑白（阈值 170）。保存后图标即时刷新
+- **Windows 凭据管理器**：API Key 不再写入 config.json，专存系统凭据管理器。`load_config()` 仍兼容读取旧 config.json 中的 key 作为迁移兜底
+- **Demo 模式**：`--demo` 启动，`app.demo_mode = True`，`do_balance_check` 使用预设数据。右键菜单新增「🛠 开发者」面板调节各种参数
+- **历史记录页**：右键新增「📊 历史记录」，Treeview 分页表格（100 条/页）+ Canvas 折线图（与表格数据同步，上限 1000 点）+ 消耗速率标签。支持 CSV 导出全部记录
+- **消耗速率**：`get_consumption_rate()` 基于 topped 余额计算非递增区间，按时长加权平均，返回日均消耗和预计剩余天/小时。余额通知和历史页同步显示
 - **API 服务状态入数据库**：`balance_history` 表新增 `service_status` 列，`save_balance_record` 同步写入
-
-### i18n
+- **通知卡片视觉优化**：每行增加 emoji 前缀（💰📊🕐📡），上次查询改为仅显示相对时间（N 分钟/小时前）
+- **HTTP 代理**：启动时读取 `http_proxy` 配置并全局安装，设置页修改后即时生效
+- **共享 tk 根窗口**：设置、历史、开发者面板共用 `_tk_root`，避免多 `tk.Tk()` 导致变量/样式冲突。历史和开发者面板支持重复唤起聚焦
 
 以下 Key 为新增，各移植版本需同时支持中英文：
 
@@ -122,3 +127,7 @@ DeepSeek API 服务状态：🟢 服务正常        ← 常驻
 | `theme_dark_mode` | 暗色模式 | Dark Mode |
 | `theme_mono` | 纯灰度 | Monochrome |
 | `theme_custom` | 自定义 | Custom |
+| `export_label` | 数据导出路径： | Export path: |
+| `export_browse` | 浏览 | Browse |
+| `proxy_label` | HTTP 代理： | HTTP proxy: |
+| `proxy_hint` | 例如 http://127.0.0.1:7890，留空则不使用 | e.g. http://127.0.0.1:7890, leave blank to disable |
