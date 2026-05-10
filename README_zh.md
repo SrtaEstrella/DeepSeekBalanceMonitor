@@ -49,7 +49,7 @@
 - Python 版：Windows 10+，Python 3.10+
 - Rust Windows 版：安装所有官方更新的 Windows 7 SP1 / Server 2008 R2 SP1、Windows 8.1 / Server 2012 R2、Windows 10 或 Windows 11
 - Rust Linux 版：RHEL 8 / Ubuntu 20.04 同时代或更新 glibc；可选小组件需要 KDE Plasma 6.0+
-- macOS 版：详见 `src/mac/`
+- macOS 版：macOS 10.14+，Python 3.10+
 
 ### 源码运行（Python）
 
@@ -96,16 +96,21 @@ sudo ./install.sh
 
 **macOS（`src/mac/`）：**
 
-详见社区贡献的 macOS 移植目录 `src/mac/`。
+```bash
+cd src/mac
+pip install -r requirements.txt
+bash ../scripts/build_mac.sh
+```
 
 ### Python 版与 Rust 版对比
 
-| | Python 版 | Rust Windows 版 | Rust Linux 版 |
-|---|---|---|---|
-| 运行时 | Python + pystray + Tkinter | 原生 Rust + native-windows-gui | 原生 Rust 命令行 |
-| 最低系统 | Windows 10+ | Windows 7 SP1+ | RHEL 8 / Ubuntu 20.04 同时代 glibc |
-| 首次无 Key | 弹出设置窗口 | 打开 `config.json` 编辑 | 输出配置路径并创建配置 |
-| 开机自启 | 注册表 Run 键 | 启动文件夹快捷方式 | systemd 用户服务 |
+| | Python Windows 版 | Rust Windows 版 | Rust Linux 版 | Python macOS 版 |
+|---|---|---|---|---|
+| 运行时 | Python + pystray + Tkinter | 原生 Rust + native-windows-gui | 原生 Rust 命令行 | Python + rumps + tkinter |
+| 最低系统 | Windows 10+ | Windows 7 SP1+ | RHEL 8 / Ubuntu 20.04 同时代 glibc | macOS 10.14+ |
+| 首次无 Key | 弹出设置窗口 | 打开 `config.json` 编辑 | 输出配置路径并创建配置 | 弹出设置窗口 |
+| 开机自启 | 注册表 Run 键 | 启动文件夹快捷方式 | systemd 用户服务 | 登录项 |
+| API Key 存储 | config.json | config.json | config.json | macOS Keychain |
 
 ## 项目结构
 
@@ -117,10 +122,14 @@ DeepSeekBalance/
 │   ├── icon_renderer.py
 │   ├── app_state.py
 │   ├── settings_dialog.py
-│   ├── tray_app.py
-│   └── mac/                  # macOS 移植
-├── scripts/                   # 构建与工具脚本
+│   └── tray_app.py
+├── src/mac/                    # 原生 MacOS 移植
+│   ├── main.py
+│   ├── settings.py
+│   └── keystore.py
+├── scripts/                    # 构建与工具脚本
 │   ├── build_exe.bat
+│   ├── build_mac.sh
 │   ├── setup.bat
 │   └── run_silent.vbs
 ├── rust-windows/              # 原生 Rust Windows 版
@@ -183,10 +192,13 @@ Windows 日志路径：`%APPDATA%\DeepSeek Balance Monitor\app.log`
 
 - API 服务状态轮询，独立图标配色与变化提醒
 - 低余额提醒三选一：不提醒 / 持续提醒 / 仅提醒一次（默认）
-- 充值直达、日志与记录可配置自动清理
-- GitHub Actions 自动构建 Python 版
-- 社区移植：Rust Windows（Win7+）、macOS
-- 通知卡片重构、设置输入校验、移除第三方 HTTP 依赖
+- 充值直达
+- 日志与记录可配置自动清理
+- GitHub Actions 自动构建
+- 社区移植：Rust-Win（Win7+）、Py-Mac
+- 通知卡片重构
+- 设置输入校验
+- 移除第三方 HTTP 依赖
 
 ## 协议
 

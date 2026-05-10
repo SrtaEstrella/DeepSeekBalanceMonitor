@@ -1,4 +1,4 @@
-# Contributing — Port Sync Guide
+# Contributing - Port Sync Guide
 
 ## Config Schema (v1.1)
 
@@ -47,7 +47,7 @@ DeepSeek API 服务状态：🟢 服务正常   ← 常驻
 
 ### Behaviour
 
-- **通知卡片重构**：标题固定为 `DeepSeek 余额：`，正文按行排列——余额行（有数据时）、状态行（上次查询 / 查询出错 / 尚未查询）、API 服务状态行（常驻）
+- **通知卡片重构**：标题固定为 `DeepSeek 余额：`，正文按行排列--余额行（有数据时）、状态行（上次查询 / 查询出错 / 尚未查询）、API 服务状态行（常驻）
 - **API 服务状态**：每次轮询额外调用 `status.deepseek.com` API，匹配组件名含 `api` 的项。状态变化时独立弹通知（`api_degraded_title/msg`、`api_recovered_title/msg`）
 - **托盘图标新增暖灰色**：API 服务异常时底色变为暖灰 + 余额数字，优先级高于余额高低判断（红色 > 暖灰 > 青色 > 灰色）
 - **余额查询容错**：查询失败时若 API 服务已知异常，不清空已有余额数据、不设错误状态

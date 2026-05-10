@@ -49,7 +49,7 @@ Grab the latest files from [Releases](https://github.com/wenyinos/DeepSeekBalanc
 - Python build: Windows 10+, Python 3.10+
 - Rust Windows build: Windows 7 SP1 / Server 2008 R2 SP1 with all official updates, Windows 8.1 / Server 2012 R2, Windows 10, or Windows 11
 - Rust Linux build: RHEL 8 / Ubuntu 20.04 era glibc or newer; KDE Plasma 6.0+ for the optional widget
-- macOS build: see `src/mac/`
+- macOS build: macOS 10.14+, Python 3.10+
 
 ### Run from Source (Python)
 
@@ -96,16 +96,21 @@ sudo ./install.sh
 
 **macOS (`src/mac/`):**
 
-See `src/mac/` for the community macOS port.
+```bash
+cd src/mac
+pip install -r requirements.txt
+bash ../scripts/build_mac.sh
+```
 
 ### Python vs Rust
 
-| | Python | Rust Windows | Rust Linux |
-|---|---|---|---|
-| Runtime | Python + pystray + Tkinter | Native Rust + native-windows-gui | Native Rust CLI |
-| Min OS | Windows 10+ | Windows 7 SP1+ | RHEL 8 / Ubuntu 20.04 era glibc |
-| First launch (no key) | Opens settings dialog | Opens `config.json` in editor | Prints config path and creates config |
-| Auto-start | Registry Run key | Startup folder shortcut | systemd user service |
+| | Python Windows | Rust Windows | Rust Linux | Python macOS |
+|---|---|---|---|---|
+| Runtime | Python + pystray + Tkinter | Native Rust + native-windows-gui | Native Rust CLI | Python + rumps + tkinter |
+| Min OS | Windows 10+ | Windows 7 SP1+ | RHEL 8 / Ubuntu 20.04 era glibc | macOS 10.14+ |
+| First launch (no key) | Opens settings dialog | Opens `config.json` in editor | Prints config path and creates config | Opens settings window |
+| Auto-start | Registry Run key | Startup folder shortcut | systemd user service | Login items |
+| API key storage | config.json | config.json | config.json | macOS Keychain |
 
 ## Project Structure
 
@@ -117,13 +122,17 @@ DeepSeekBalance/
 │   ├── icon_renderer.py
 │   ├── app_state.py
 │   ├── settings_dialog.py
-│   ├── tray_app.py
-│   └── mac/                  # macOS port
-├── scripts/                   # Build & utility scripts
+│   └── tray_app.py
+├── src/mac/                    # Native MacOS port
+│   ├── main.py
+│   ├── settings.py
+│   └── keystore.py
+├── scripts/                    # Build & utility scripts
 │   ├── build_exe.bat
+│   ├── build_mac.sh
 │   ├── setup.bat
 │   └── run_silent.vbs
-├── rust-windows/              # Native Rust Windows port
+├── rust-windows/               # Native Rust Windows port
 │   ├── src/main.rs
 │   ├── app.ico
 │   ├── app.manifest
@@ -183,10 +192,13 @@ Windows logs are written to `%APPDATA%\DeepSeek Balance Monitor\app.log`.
 
 - API service status polling with dedicated icon colour and change notifications
 - Three alert modes: never, always, or once per drop (default: once)
-- Top-up menu item, log & record retention with configurable cleanup
+- Top-up menu item
+- Log & record retention with configurable cleanup
 - GitHub Actions auto-build for Python releases
-- Community ports: Rust Windows (Win7+), macOS
-- Refined notification layout, settings input validation, stdlib-only dependencies
+- Community ports: Rust-Win (Win7+), Py-Mac
+- Refined notification layout
+- Settings input validation
+- Removed third-party HTTP dependency (stdlib only)
 
 ## License
 
