@@ -3,6 +3,7 @@ name: Rust Linux
 on:
   push:
     branches:
+      - "main"
       - "Rust-Dev"
     tags:
       - "rust-v[0-9]*"
@@ -42,6 +43,10 @@ jobs:
       - name: Check Linux target
         working-directory: rust-linux
         run: cargo +1.77.2 check --locked
+
+      - name: Run unit tests
+        working-directory: rust-linux
+        run: cargo +1.77.2 test --locked
 
       - name: Build release binary
         working-directory: rust-linux
