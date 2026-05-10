@@ -2,12 +2,14 @@ import QtQuick
 import QtQuick.Controls as QtControls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import org.kde.kcmutils as KCM
 import org.kde.plasma.plasma5support as Plasma5Support
 
-Kirigami.FormLayout {
+KCM.SimpleKCM {
     id: page
 
     property alias cfg_language: languageCombo.currentValue
+    property string cfg_languageDefault: systemLanguage()
     property string statusText: ""
     property bool busy: false
     readonly property string uiLanguage: languageCombo.currentValue || systemLanguage()
@@ -162,92 +164,94 @@ Kirigami.FormLayout {
         }
     }
 
-    QtControls.TextField {
-        id: apiKeyField
-        Kirigami.FormData.label: tr("apiKey")
-        Layout.fillWidth: true
-        echoMode: showKeyCheck.checked ? TextInput.Normal : TextInput.Password
-    }
+    Kirigami.FormLayout {
+        QtControls.TextField {
+            id: apiKeyField
+            Kirigami.FormData.label: tr("apiKey")
+            Layout.fillWidth: true
+            echoMode: showKeyCheck.checked ? TextInput.Normal : TextInput.Password
+        }
 
-    QtControls.CheckBox {
-        id: showKeyCheck
-        text: tr("showApiKey")
-    }
+        QtControls.CheckBox {
+            id: showKeyCheck
+            text: tr("showApiKey")
+        }
 
-    QtControls.SpinBox {
-        id: intervalSpin
-        Kirigami.FormData.label: tr("interval")
-        from: 1
-        to: 1440
-        editable: true
-        textFromValue: function(value) { return value + " " + tr("minutes") }
-        valueFromText: function(text) { return parseInt(text) || 10 }
-    }
+        QtControls.SpinBox {
+            id: intervalSpin
+            Kirigami.FormData.label: tr("interval")
+            from: 1
+            to: 1440
+            editable: true
+            textFromValue: function(value) { return value + " " + tr("minutes") }
+            valueFromText: function(text) { return parseInt(text) || 10 }
+        }
 
-    QtControls.TextField {
-        id: thresholdField
-        Kirigami.FormData.label: tr("threshold")
-        inputMethodHints: Qt.ImhFormattedNumbersOnly
-    }
+        QtControls.TextField {
+            id: thresholdField
+            Kirigami.FormData.label: tr("threshold")
+            inputMethodHints: Qt.ImhFormattedNumbersOnly
+        }
 
-    QtControls.ComboBox {
-        id: languageCombo
-        Kirigami.FormData.label: tr("language")
-        textRole: "text"
-        valueRole: "value"
-        model: [
-            { text: "English", value: "en" },
-            { text: "中文", value: "zh" }
-        ]
-    }
+        QtControls.ComboBox {
+            id: languageCombo
+            Kirigami.FormData.label: tr("language")
+            textRole: "text"
+            valueRole: "value"
+            model: [
+                { text: "English", value: "en" },
+                { text: "中文", value: "zh" }
+            ]
+        }
 
-    QtControls.CheckBox {
-        id: autoStartCheck
-        text: tr("autoStart")
-    }
+        QtControls.CheckBox {
+            id: autoStartCheck
+            text: tr("autoStart")
+        }
 
-    QtControls.Label {
-        Layout.fillWidth: true
-        text: tr("autoStartHint")
-        wrapMode: Text.WordWrap
-    }
+        QtControls.Label {
+            Layout.fillWidth: true
+            text: tr("autoStartHint")
+            wrapMode: Text.WordWrap
+        }
 
-    QtControls.ComboBox {
-        id: alertModeCombo
-        Kirigami.FormData.label: tr("alerts")
-        textRole: "text"
-        valueRole: "value"
-        model: [
-            { text: tr("alertOnce"), value: "once" },
-            { text: tr("alertAlways"), value: "always" },
-            { text: tr("alertNever"), value: "never" }
-        ]
-    }
+        QtControls.ComboBox {
+            id: alertModeCombo
+            Kirigami.FormData.label: tr("alerts")
+            textRole: "text"
+            valueRole: "value"
+            model: [
+                { text: tr("alertOnce"), value: "once" },
+                { text: tr("alertAlways"), value: "always" },
+                { text: tr("alertNever"), value: "never" }
+            ]
+        }
 
-    QtControls.CheckBox {
-        id: apiAlertCheck
-        text: tr("apiAlert")
-    }
+        QtControls.CheckBox {
+            id: apiAlertCheck
+            text: tr("apiAlert")
+        }
 
-    QtControls.SpinBox {
-        id: logRetentionSpin
-        Kirigami.FormData.label: tr("logRetention")
-        from: 1
-        to: 3650
-        editable: true
-        textFromValue: function(value) { return value + " " + tr("days") }
-        valueFromText: function(text) { return parseInt(text) || 30 }
-    }
+        QtControls.SpinBox {
+            id: logRetentionSpin
+            Kirigami.FormData.label: tr("logRetention")
+            from: 1
+            to: 3650
+            editable: true
+            textFromValue: function(value) { return value + " " + tr("days") }
+            valueFromText: function(text) { return parseInt(text) || 30 }
+        }
 
-    QtControls.Button {
-        text: tr("save")
-        enabled: !busy
-        onClicked: saveConfig()
-    }
+        QtControls.Button {
+            text: tr("save")
+            enabled: !busy
+            onClicked: saveConfig()
+        }
 
-    QtControls.Label {
-        Layout.fillWidth: true
-        text: statusText
-        wrapMode: Text.WordWrap
+        QtControls.Label {
+            Layout.fillWidth: true
+            text: statusText
+            wrapMode: Text.WordWrap
+        }
     }
 }

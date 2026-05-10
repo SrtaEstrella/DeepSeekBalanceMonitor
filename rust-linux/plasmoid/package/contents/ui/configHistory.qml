@@ -2,9 +2,10 @@ import QtQuick
 import QtQuick.Controls as QtControls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import org.kde.kcmutils as KCM
 import org.kde.plasma.plasma5support as Plasma5Support
 
-Kirigami.FormLayout {
+KCM.SimpleKCM {
     id: page
 
     property bool busy: false
@@ -201,113 +202,115 @@ Kirigami.FormLayout {
         }
     }
 
-    RowLayout {
-        Layout.fillWidth: true
+    Kirigami.FormLayout {
+        RowLayout {
+            Layout.fillWidth: true
+
+            QtControls.Label {
+                text: tr("days")
+            }
+            QtControls.TextField {
+                id: daysField
+                text: "30"
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 4
+                onEditingFinished: loadHistory()
+            }
+            QtControls.Label {
+                text: tr("currency")
+            }
+            QtControls.ComboBox {
+                id: currencyBox
+                model: page.currencyLabels
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 7
+                onActivated: loadHistory()
+            }
+            QtControls.Button {
+                text: tr("refresh")
+                enabled: !busy
+                onClicked: loadHistory()
+            }
+            QtControls.Button {
+                text: tr("export")
+                enabled: !exporting
+                onClicked: exportHistory()
+            }
+        }
 
         QtControls.Label {
-            text: tr("days")
+            Layout.fillWidth: true
+            text: summaryText
+            wrapMode: Text.WordWrap
         }
-        QtControls.TextField {
-            id: daysField
-            text: "30"
-            Layout.preferredWidth: Kirigami.Units.gridUnit * 4
-            onEditingFinished: loadHistory()
-        }
-        QtControls.Label {
-            text: tr("currency")
-        }
-        QtControls.ComboBox {
-            id: currencyBox
-            model: page.currencyLabels
-            Layout.preferredWidth: Kirigami.Units.gridUnit * 7
-            onActivated: loadHistory()
-        }
-        QtControls.Button {
-            text: tr("refresh")
-            enabled: !busy
-            onClicked: loadHistory()
-        }
-        QtControls.Button {
-            text: tr("export")
-            enabled: !exporting
-            onClicked: exportHistory()
-        }
-    }
 
-    QtControls.Label {
-        Layout.fillWidth: true
-        text: summaryText
-        wrapMode: Text.WordWrap
-    }
-
-    Canvas {
-        id: chart
-        Kirigami.FormData.label: tr("chart")
-        Layout.fillWidth: true
-        Layout.preferredHeight: Kirigami.Units.gridUnit * 14
-        onPaint: {
-            var ctx = getContext("2d")
-            ctx.clearRect(0, 0, width, height)
-            ctx.fillStyle = Kirigami.Theme.backgroundColor
-            ctx.fillRect(0, 0, width, height)
-            if (page.records.length === 0) {
-                return
-            }
-            var points = page.records.slice(Math.max(0, page.records.length - 80))
-            var minValue = points[0].total
-            var maxValue = points[0].total
-            for (var i = 0; i < points.length; i++) {
-                minValue = Math.min(minValue, points[i].total)
-                maxValue = Math.max(maxValue, points[i].total)
-            }
-            var span = Math.max(0.01, maxValue - minValue)
-            var left = 64
-            var right = width - 16
-            var top = 12
-            var bottom = height - 42
-            var plotWidth = Math.max(1, right - left)
-            var plotHeight = Math.max(1, bottom - top)
-            ctx.strokeStyle = Kirigami.Theme.disabledTextColor
-            ctx.lineWidth = 1
-            ctx.beginPath()
-            ctx.moveTo(left, top)
-            ctx.lineTo(left, bottom)
-            ctx.lineTo(right, bottom)
-            ctx.stroke()
-            ctx.fillStyle = Kirigami.Theme.textColor
-            ctx.font = "10px sans-serif"
-            var midValue = minValue + span / 2
-            var labels = [
-                { y: top + 4, text: maxValue.toFixed(2) },
-                { y: top + plotHeight / 2 + 4, text: midValue.toFixed(2) },
-                { y: bottom + 4, text: minValue.toFixed(2) }
-            ]
-            for (var labelIndex = 0; labelIndex < labels.length; labelIndex++) {
-                ctx.fillText(labels[labelIndex].text, 4, labels[labelIndex].y)
-            }
-            ctx.fillText(tr("yAxis"), 4, top + 16)
-            ctx.fillText(points[0].timestamp.substring(5, 16), left, height - 18)
-            ctx.fillText(points[points.length - 1].timestamp.substring(5, 16), Math.max(left, right - 80), height - 18)
-            ctx.fillText(tr("xAxis"), Math.max(left, right - 40), height - 4)
-            ctx.strokeStyle = Kirigami.Theme.highlightColor
-            ctx.lineWidth = 2
-            ctx.beginPath()
-            for (var j = 0; j < points.length; j++) {
-                var x = points.length === 1 ? left + plotWidth / 2 : left + j * plotWidth / (points.length - 1)
-                var y = bottom - ((points[j].total - minValue) / span) * plotHeight
-                if (j === 0) {
-                    ctx.moveTo(x, y)
-                } else {
-                    ctx.lineTo(x, y)
+        Canvas {
+            id: chart
+            Kirigami.FormData.label: tr("chart")
+            Layout.fillWidth: true
+            Layout.preferredHeight: Kirigami.Units.gridUnit * 14
+            onPaint: {
+                var ctx = getContext("2d")
+                ctx.clearRect(0, 0, width, height)
+                ctx.fillStyle = Kirigami.Theme.backgroundColor
+                ctx.fillRect(0, 0, width, height)
+                if (page.records.length === 0) {
+                    return
                 }
+                var points = page.records.slice(Math.max(0, page.records.length - 80))
+                var minValue = points[0].total
+                var maxValue = points[0].total
+                for (var i = 0; i < points.length; i++) {
+                    minValue = Math.min(minValue, points[i].total)
+                    maxValue = Math.max(maxValue, points[i].total)
+                }
+                var span = Math.max(0.01, maxValue - minValue)
+                var left = 64
+                var right = width - 16
+                var top = 12
+                var bottom = height - 42
+                var plotWidth = Math.max(1, right - left)
+                var plotHeight = Math.max(1, bottom - top)
+                ctx.strokeStyle = Kirigami.Theme.disabledTextColor
+                ctx.lineWidth = 1
+                ctx.beginPath()
+                ctx.moveTo(left, top)
+                ctx.lineTo(left, bottom)
+                ctx.lineTo(right, bottom)
+                ctx.stroke()
+                ctx.fillStyle = Kirigami.Theme.textColor
+                ctx.font = "10px sans-serif"
+                var midValue = minValue + span / 2
+                var labels = [
+                    { y: top + 4, text: maxValue.toFixed(2) },
+                    { y: top + plotHeight / 2 + 4, text: midValue.toFixed(2) },
+                    { y: bottom + 4, text: minValue.toFixed(2) }
+                ]
+                for (var labelIndex = 0; labelIndex < labels.length; labelIndex++) {
+                    ctx.fillText(labels[labelIndex].text, 4, labels[labelIndex].y)
+                }
+                ctx.fillText(tr("yAxis"), 4, top + 16)
+                ctx.fillText(points[0].timestamp.substring(5, 16), left, height - 18)
+                ctx.fillText(points[points.length - 1].timestamp.substring(5, 16), Math.max(left, right - 80), height - 18)
+                ctx.fillText(tr("xAxis"), Math.max(left, right - 40), height - 4)
+                ctx.strokeStyle = Kirigami.Theme.highlightColor
+                ctx.lineWidth = 2
+                ctx.beginPath()
+                for (var j = 0; j < points.length; j++) {
+                    var x = points.length === 1 ? left + plotWidth / 2 : left + j * plotWidth / (points.length - 1)
+                    var y = bottom - ((points[j].total - minValue) / span) * plotHeight
+                    if (j === 0) {
+                        ctx.moveTo(x, y)
+                    } else {
+                        ctx.lineTo(x, y)
+                    }
+                }
+                ctx.stroke()
             }
-            ctx.stroke()
         }
-    }
 
-    QtControls.Label {
-        Layout.fillWidth: true
-        text: statusText
-        wrapMode: Text.WordWrap
+        QtControls.Label {
+            Layout.fillWidth: true
+            text: statusText
+            wrapMode: Text.WordWrap
+        }
     }
 }
