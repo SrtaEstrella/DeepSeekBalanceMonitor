@@ -219,6 +219,12 @@ nav {
   border-bottom: 1px solid var(--border-card);
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .card-header h3 {
   font-size: 14px;
   font-weight: 600;

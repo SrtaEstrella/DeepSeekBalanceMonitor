@@ -33,6 +33,7 @@ class ApiClient {
 
     async getHistoryPage(limit, offset) { return this._call('get_history_page', limit, offset); }
     async getConsumptionRate() { return this._call('get_consumption_rate'); }
+    async exportCsv() { return this._call('export_csv'); }
     async open_url(url) { return this._call('open_url', url); }
     async getApiStatus() { return this._call('get_api_status'); }
 }

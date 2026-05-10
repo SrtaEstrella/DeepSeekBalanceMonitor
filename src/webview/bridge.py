@@ -142,6 +142,33 @@ class JsApi:
             return result[0]
         return ""
 
+    def export_csv(self):
+        """Export all balance records to CSV. Opens save dialog."""
+        from src.storage import export_all_csv
+        cfg = load_config()
+        default_dir = cfg.get("export_path", "")
+        if not self._window:
+            return {"success": False, "error": "No window"}
+
+        import webview
+        result = self._window.create_file_dialog(
+            webview.SAVE_DIALOG, directory=default_dir,
+            save_filename="deepseek_balance.csv",
+            file_types=("CSV Files (*.csv)",),
+        )
+        if not result:
+            return {"success": False, "error": "Cancelled"}
+
+        path = result if isinstance(result, str) else (result[0] if isinstance(result, (list, tuple)) and len(result) > 0 else None)
+        if not path:
+            return {"success": False, "error": "Cancelled"}
+
+        count = export_all_csv(path)
+        if count > 0:
+            log(f"Exported {count} records to {path}")
+            return {"success": True, "data": {"count": count, "path": path}}
+        return {"success": False, "error": "No data exported"}
+
     # ---- History API ----
 
     def get_history_page(self, limit=100, offset=0):

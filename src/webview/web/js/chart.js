@@ -11,6 +11,11 @@ class BalanceChart {
                 this._renderTable();
             });
         }
+
+        const exportBtn = document.getElementById('btn-export-csv');
+        if (exportBtn) {
+            exportBtn.addEventListener('click', () => this._exportCsv());
+        }
     }
 
     async init() {
@@ -233,6 +238,16 @@ class BalanceChart {
             `;
         } else {
             el.innerHTML = '';
+        }
+    }
+
+    async _exportCsv() {
+        const result = await window.api.exportCsv();
+        if (result && result.success) {
+            alert(`Exported ${result.data.count} records to ${result.data.path}`);
+        } else {
+            const msg = result && result.error ? result.error : 'Export failed';
+            if (msg !== 'Cancelled') alert(msg);
         }
     }
 

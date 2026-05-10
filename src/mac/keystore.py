@@ -1,46 +1,84 @@
-"""
-mac_keystore.py — AES (Fernet) encrypted API Key storage for macOS.
-
-The encryption key is derived from a machine-unique secret stored in
-~/Library/Application Support/<APP_NAME>/.keyring  (mode 600).
-This keeps the key off the code and config files.
-"""
 import os
 import stat
 import base64
+import struct
+import hmac
+import hashlib
+import time
 from pathlib import Path
-from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from typing import Optional
+from ctypes import CDLL, c_size_t, byref, create_string_buffer
 
-_SALT = b"DeepSeekBalMonMacSalt2025"  # static salt is fine; secrecy lives in the keyring file
+# Load CommonCrypto for AES-128-CBC
+_common_crypto = CDLL("/usr/lib/system/libcommonCrypto.dylib")
 
-def _get_fernet(data_dir: Path) -> Fernet:
+kCCEncrypt = 0
+kCCDecrypt = 1
+kCCAlgorithmAES128 = 0
+kCCOptionPKCS7Padding = 1
+kCCBlockSizeAES128 = 16
+
+_SALT = b"DeepSeekBalMonMacSalt2025"
+
+def _aes_cbc_decrypt(key: bytes, iv: bytes, ciphertext: bytes) -> bytes:
+    out_buf = create_string_buffer(len(ciphertext) + kCCBlockSizeAES128)
+    out_len = c_size_t()
+    status = _common_crypto.CCCrypt(
+        kCCDecrypt, kCCAlgorithmAES128, kCCOptionPKCS7Padding,
+        key, len(key), iv, ciphertext, len(ciphertext),
+        out_buf, len(out_buf), byref(out_len)
+    )
+    if status != 0:
+        raise ValueError(f"CCCrypt failed with status {status}")
+    return out_buf.raw[:out_len.value]
+
+def _aes_cbc_encrypt(key: bytes, iv: bytes, plaintext: bytes) -> bytes:
+    out_buf = create_string_buffer(len(plaintext) + kCCBlockSizeAES128)
+    out_len = c_size_t()
+    status = _common_crypto.CCCrypt(
+        kCCEncrypt, kCCAlgorithmAES128, kCCOptionPKCS7Padding,
+        key, len(key), iv, plaintext, len(plaintext),
+        out_buf, len(out_buf), byref(out_len)
+    )
+    if status != 0:
+        raise ValueError(f"CCCrypt failed with status {status}")
+    return out_buf.raw[:out_len.value]
+
+def _get_fernet_keys(data_dir: Path) -> tuple[bytes, bytes]:
     keyring_path = data_dir / ".keyring"
-    if keyring_path.exists():
-        raw = keyring_path.read_bytes()
-    else:
-        # Generate a new 32-byte random master secret
+    if not keyring_path.exists():
         raw = os.urandom(32)
         keyring_path.write_bytes(raw)
-        # Lock to owner-read-only
         os.chmod(keyring_path, stat.S_IRUSR | stat.S_IWUSR)
+    else:
+        raw = keyring_path.read_bytes()
 
-    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=_SALT, iterations=100_000)
-    key = base64.urlsafe_b64encode(kdf.derive(raw))
-    return Fernet(key)
+    derived = hashlib.pbkdf2_hmac('sha256', raw, _SALT, 100_000, 32)
+    return derived[:16], derived[16:]
 
-def encrypt_api_key(plaintext: str, data_dir: Path) -> str:
-    """Encrypt and return base64-encoded ciphertext."""
-    f = _get_fernet(data_dir)
-    return f.encrypt(plaintext.encode()).decode()
-
-def decrypt_api_key(ciphertext: str, data_dir: Path) -> str:
-    """Decrypt and return plaintext. Returns '' on any error."""
-    if not ciphertext:
+def encrypt_api_key(plaintext: str, data_dir: Optional[Path] = None) -> str:
+    if not plaintext or data_dir is None:
         return ""
     try:
-        f = _get_fernet(data_dir)
-        return f.decrypt(ciphertext.encode()).decode()
+        signing_key, encryption_key = _get_fernet_keys(data_dir)
+        version, timestamp, iv = b"\x80", struct.pack(">Q", int(time.time())), os.urandom(16)
+        ciphertext = _aes_cbc_encrypt(encryption_key, iv, plaintext.encode())
+        basic_parts = version + timestamp + iv + ciphertext
+        hmac_val = hmac.new(signing_key, basic_parts, hashlib.sha256).digest()
+        return base64.urlsafe_b64encode(basic_parts + hmac_val).decode()
+    except Exception:
+        return ""
+
+def decrypt_api_key(ciphertext: str, data_dir: Optional[Path] = None) -> str:
+    if not ciphertext or data_dir is None:
+        return ""
+    try:
+        data = base64.urlsafe_b64decode(ciphertext.encode())
+        if data[0] != 0x80: return ""
+        signing_key, encryption_key = _get_fernet_keys(data_dir)
+        if not hmac.compare_digest(hmac.new(signing_key, data[:-32], hashlib.sha256).digest(), data[-32:]):
+            return ""
+        plaintext = _aes_cbc_decrypt(encryption_key, data[9:25], data[25:-32])
+        return plaintext.decode('utf-8')
     except Exception:
         return ""

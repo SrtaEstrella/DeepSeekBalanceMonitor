@@ -125,11 +125,11 @@ bash ../scripts/build_mac.sh
 
 | | Python Windows 版 | Rust Windows 版 | Rust Linux 版 | Python MacOS 版 |
 |---|---|---|---|---|
-| 运行时 | Python + pystray + Tkinter | 原生 Rust + native-windows-gui | 原生 Rust 命令行 | Python + rumps + tkinter |
+| 运行时 | Python + pystray + Tkinter | 原生 Rust + native-windows-gui | 原生 Rust 命令行 | Python + rumps + webview |
 | 最低系统 | Windows 10+ | Windows 7 SP1+ | RHEL 8 / Ubuntu 20.04 同时代 glibc | MacOS 10.14+ |
 | 首次无 Key | 弹出设置窗口 | 打开 `config.json` 编辑 | 输出配置路径并创建配置 | 弹出设置窗口 |
 | 开机自启 | 注册表 Run 键 | 启动文件夹快捷方式 | systemd 用户服务 | 登录项 |
-| API Key 存储 | config.json | config.json | config.json | MacOS Keychain |
+| API Key 存储 | config.json | config.json | config.json | AES加密keyring |
 
 ## 项目结构
 

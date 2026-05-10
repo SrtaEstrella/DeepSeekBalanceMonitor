@@ -47,6 +47,8 @@ DEFAULT_CONFIG = {
     "theme": "default",
     "icon_colors": {},
     "icon_stroke": False,
+    "export_path": "",
+    "http_proxy": "",
     "auto_start": False,
 }
 

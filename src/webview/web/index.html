@@ -43,7 +43,10 @@
       <div class="card">
           <div class="card-header">
             <h3 data-i18n="history_table">History Records</h3>
-            <input type="date" id="history-date-filter" class="input-text" style="width: 90px; padding: 3px 6px; font-size: 11px; outline: none; border: 1px solid var(--border-muted); border-radius: 6px; background: var(--bg-input); color: var(--text-primary); text-align: center;">
+            <div class="header-actions">
+              <button id="btn-export-csv" class="btn" style="height: 26px; padding: 0 10px; font-size: 11px;">CSV</button>
+              <input type="date" id="history-date-filter" class="input-text" style="width: 100px; height: 26px; padding: 0 6px; font-size: 11px; outline: none; border: 1px solid var(--border-muted); border-radius: 6px; background: var(--bg-input); color: var(--text-primary); text-align: center; box-sizing: border-box;">
+            </div>
           </div>
         <div class="table-wrap">
           <table id="history-table">
@@ -244,9 +247,9 @@
 </div>
 
 <script src="js/vendor/chart.min.js"></script>
-<script src="js/api.js?v=2"></script>
-<script src="js/settings.js?v=2"></script>
-<script src="js/chart.js?v=2"></script>
-<script src="js/app.js?v=2"></script>
+<script src="js/api.js?v=3"></script>
+<script src="js/settings.js?v=3"></script>
+<script src="js/chart.js?v=3"></script>
+<script src="js/app.js?v=3"></script>
 </body>
 </html>

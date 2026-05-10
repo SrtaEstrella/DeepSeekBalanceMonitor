@@ -125,11 +125,11 @@ bash ../scripts/build_mac.sh
 
 | | Python Windows | Rust Windows | Rust Linux | Python MacOS |
 |---|---|---|---|---|
-| Runtime | Python + pystray + Tkinter | Native Rust + native-windows-gui | Native Rust CLI | Python + rumps + tkinter |
+| Runtime | Python + pystray + Tkinter | Native Rust + native-windows-gui | Native Rust CLI | Python + rumps + webview |
 | Min OS | Windows 10+ | Windows 7 SP1+ | RHEL 8 / Ubuntu 20.04 era glibc | MacOS 10.14+ |
 | First launch (no key) | Opens settings dialog | Opens `config.json` in editor | Prints config path and creates config | Opens settings window |
 | Auto-start | Registry Run key | Startup folder shortcut | systemd user service | Login items |
-| API key storage | config.json | config.json | config.json | MacOS Keychain |
+| API key storage | config.json | config.json | config.json | keyring with AES encryption |
 
 ## Project Structure
 
