@@ -9,7 +9,7 @@ from datetime import datetime
 import pystray
 
 from src.config import T, log, CONFIG_DIR, APP_NAME, APP_ID
-from src.api_client import fetch_balance, fetch_service_status
+from src.api_client import fetch_balance, fetch_service_status, install_proxy
 from src.icon_renderer import create_icon_image
 from src.app_state import AppState
 from src.storage import save_balance_record, prune_old_data
@@ -178,26 +178,37 @@ def on_show_balance(icon, item):
     lines = []
 
     if err:
-        lines.append(T("bal_error_msg", lang, error=err))
+        lines.append(f"⚠ {T('bal_error_msg', lang, error=err)}")
     elif not balances:
-        lines.append(T("bal_empty_msg", lang))
+        lines.append(f"⏳ {T('bal_empty_msg', lang)}")
     else:
         pb = app.get_preferred_balance()
         if pb:
-            lines.append(T("bal_line", lang,
+            lines.append(f"💰 {T('bal_line', lang,
                            balance=f"{pb['total_balance']:,.2f}",
-                           code=pb["currency"],
+                           code=pb['currency'],
                            topped=f"{pb['topped_up_balance']:,.2f}",
-                           granted=f"{pb['granted_balance']:,.2f}"))
+                           granted=f"{pb['granted_balance']:,.2f}")}")
         else:
             first_code = next(iter(balances))
             b = balances[first_code]
-            lines.append(T("bal_line", lang,
+            lines.append(f"💰 {T('bal_line', lang,
                            balance=f"{b['total_balance']:,.2f}",
                            code=first_code,
                            topped=f"{b['topped_up_balance']:,.2f}",
-                           granted=f"{b['granted_balance']:,.2f}"))
-        time_str = last.strftime("%Y-%m-%d %H:%M:%S") if last else "-"
+                           granted=f"{b['granted_balance']:,.2f}")}")
+        if last:
+            diff = datetime.now() - last
+            mins = int(diff.total_seconds() / 60)
+            if mins < 1:
+                ago = "just now" if lang == "en" else "刚刚"
+            elif mins < 60:
+                ago = f"{mins} min ago" if lang == "en" else f"{mins} 分钟前"
+            else:
+                hrs = mins // 60
+                ago = f"{hrs} hr ago" if lang == "en" else f"{hrs} 小时前"
+            sep = ": " if lang == "en" else "："
+            lines.append(f"🕐 {T('last_check', lang)}{sep}{ago}")
 
         from src.storage import get_consumption_rate
         cr = get_consumption_rate()
@@ -207,16 +218,14 @@ def on_show_balance(icon, item):
             hrs = int(hours_left % 24)
             if lang == "en":
                 lines.append(
-                    f"Avg: {daily_rate:.2f}/day  |  Est. {days}d {hrs}h remaining"
+                    f"📊 Avg: {daily_rate:.2f}/day  |  Est. {days}d {hrs}h remaining"
                 )
             else:
                 lines.append(
-                    f"日均消耗 {daily_rate:.2f}  |  预计可用 {days} 天 {hrs} 小时"
+                    f"📊 日均消耗 {daily_rate:.2f}  |  预计可用 {days} 天 {hrs} 小时"
                 )
 
-        lines.append(T("last_check", lang) + ": " + time_str)
-
-    lines.append(status_line)
+    lines.append(f"📡 {status_line}")
     msg = "\n".join(lines)
 
     try:
@@ -440,12 +449,36 @@ def _on_history(icon, item):
         _redraw_chart()
         _update_rate_label()
 
+    def _export_csv():
+        from tkinter import filedialog, messagebox
+        from src.storage import export_all_csv
+        import os, datetime as _dt
+        path = app.config.get("export_path", "").strip()
+        if path:
+            ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            f = os.path.join(path, f"deepseek_balance_{ts}.csv")
+        else:
+            f = filedialog.asksaveasfilename(
+                parent=win, defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv")],
+                initialfile="deepseek_balance_history.csv",
+            )
+        if f:
+            n = export_all_csv(f)
+            msg = f"{n} records exported" if lang == "en" else f"已导出 {n} 条记录"
+            messagebox.showinfo("Export", msg, parent=win)
+
+    export_btn = ttk.Button(btn_frame, text="Export CSV" if lang == "en" else "导出 CSV",
+                            command=_export_csv)
+
     load_btn.configure(command=_load_page)
     if lang == "en":
         load_btn.pack(side="left")
+        export_btn.pack(side="left", padx=(6, 0))
         ttk.Button(btn_frame, text="Close", command=win.destroy).pack(side="right")
     else:
         load_btn.pack(side="left")
+        export_btn.pack(side="left", padx=(6, 0))
         ttk.Button(btn_frame, text="关闭", command=win.destroy).pack(side="right")
 
     _load_page()
@@ -569,6 +602,11 @@ def main():
     log(f"{APP_NAME} starting")
 
     app = AppState()
+    proxy = app.config.get("http_proxy", "").strip()
+    if proxy:
+        install_proxy(proxy)
+        log(f"Proxy set: {proxy}")
+
     if "--demo" in sys.argv:
         app.demo_mode = True
         log("Demo mode enabled")

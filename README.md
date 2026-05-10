@@ -223,12 +223,11 @@ Rust Windows and Rust Linux store balance history in `balance_history.db` next t
 
 - API service status polling via `status.deepseek.com`. Tray icon turns warm gray when API is degraded; status changes trigger independent desktop notifications
 - "Top Up" menu item that opens `platform.deepseek.com/top_up` in the browser
-- SQLite balance history storage across all builds with configurable log & record retention (default 30 days)
-- GitHub Actions CI auto-builds and attaches `DeepSeekBalanceMonitor.exe` to each release
+- SQLite balance history storage with configurable log & record retention (default 30 days)
 - Community-contributed ports: Rust-Win (native Rust, Win7+), Rust-Linux (CLI + Plasma 6 widget), Py-Mac (native MacOS, Keychain-secured)
-- Rust builds: history chart, days/currency filters, CSV export, `dsmon history` / `dsmon history export` CLI commands
-- Plasma widget daemon start/stop action with command-error notifications
-- Windows 7/8.1 root certificate update helper script
+  - Rust builds: history chart, days/currency filters, CSV export, `dsmon history` CLI commands
+  - Plasma widget daemon start/stop action with command-error notifications
+  - Windows 7/8.1 root certificate update helper script
 
 **Changed**
 
@@ -242,12 +241,16 @@ Rust Windows and Rust Linux store balance history in `balance_history.db` next t
 
 ### Upcoming (already on `main`, pending next release)
 
-- Windows Credential Manager integration: API keys are stored encrypted via the system credential store instead of plaintext `config.json`
-- Demo mode (`--demo`) with a developer tools panel for interactively testing balance levels, error states, and API status scenarios
-- Custom icon colour themes: 5 presets (Default, High Contrast, Bright, Dark Mode, Monochrome) + custom hex colour editor with live preview in settings
-- Configurable icon stroke (width, opacity, auto-matching text colour)
-- History viewer: paginated table of all balance records, with interactive trend chart and consumption rate analysis
-- Consumption rate estimation: daily average spend and projected days remaining, shown in both the balance notification and history viewer
+**Added**
+- Custom icon styling: 5 preset colour themes (Default / High Contrast / Bright / Dark Mode / Monochrome) + custom hex colour editor and icon stroke toggle
+- History viewer: paginated table of all balance records with trend chart and consumption rate analysis, CSV export support
+- Consumption rate estimation: daily average spend and projected days/hours remaining, visible in balance notification and history viewer
+- Demo mode (`--demo`) with a developer tools panel for interactively testing various states
+- HTTP proxy support for restricted network environments
+
+**Changed**
+- API key now stored encrypted in Windows Credential Manager instead of plaintext `config.json`
+- Balance detail notification visual polish: emoji prefixes for each line, last-check now shows relative time only
 - API service status now recorded alongside each balance entry in the local database
 
 ## License
