@@ -2418,6 +2418,77 @@ mod windows_app {
             _ => "",
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn balance(total: f64) -> Balance {
+            Balance {
+                total_balance: total,
+                granted_balance: 1.0,
+                topped_up_balance: total - 1.0,
+            }
+        }
+
+        #[test]
+        fn formats_status_icon_labels_and_low_balance_alerts() {
+            assert_eq!(parse_amount("12.34"), 12.34);
+            assert_eq!(parse_amount("bad"), 0.0);
+            assert_eq!(format_amount(1.2), "1.20");
+            assert_eq!(format_signed_amount(-2.0), "-2.00");
+            assert_eq!(normalize_service_status("partial_outage"), "major");
+            assert!(status_rank("critical") > status_rank("major"));
+            assert!(service_degraded("minor"));
+            assert_eq!(icon_label(99.9), "99");
+            assert_eq!(icon_label(100.0), "OK");
+
+            let mut state = RuntimeState::default();
+            state.config.threshold_yuan = 10.0;
+            state.balances.insert("CNY".to_string(), balance(5.0));
+            assert!(is_low_balance(&state));
+            assert!(should_low_balance_alert(&mut state, true));
+            assert!(!should_low_balance_alert(&mut state, true));
+            assert!(!should_low_balance_alert(&mut state, false));
+            assert!(should_low_balance_alert(&mut state, true));
+            state.config.alert_mode = "never".to_string();
+            assert!(!should_low_balance_alert(&mut state, true));
+            state.config.alert_mode = "always".to_string();
+            assert!(should_low_balance_alert(&mut state, true));
+        }
+
+        #[test]
+        fn summarizes_history_csv_and_log_retention() {
+            let records = vec![
+                HistoryRecord {
+                    timestamp: "2026-01-01 00:00:00".to_string(),
+                    currency: "CNY".to_string(),
+                    total: 10.0,
+                    topped: 8.0,
+                    granted: 2.0,
+                },
+                HistoryRecord {
+                    timestamp: "2026-01-02 00:00:00".to_string(),
+                    currency: "CNY".to_string(),
+                    total: 7.0,
+                    topped: 5.0,
+                    granted: 2.0,
+                },
+            ];
+            let summary = summarize_history(&records);
+            assert_eq!(summary[0].records, 2);
+            assert_eq!(summary[0].latest_total, 7.0);
+            assert_eq!(summary[0].change_total, -3.0);
+            assert!(history_csv(&records).contains("2026-01-02 00:00:00,CNY,7.00,5.00,2.00"));
+            assert_eq!(csv_escape("CNY,\"test\""), "\"CNY,\"\"test\"\"\"");
+
+            let cutoff =
+                NaiveDateTime::parse_from_str("2026-01-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+            assert!(!keep_log_line("[2026-01-01 23:59:59] old", cutoff));
+            assert!(keep_log_line("[2026-01-02 00:00:00] keep", cutoff));
+            assert!(keep_log_line("unstructured line", cutoff));
+        }
+    }
 }
 
 #[cfg(windows)]
