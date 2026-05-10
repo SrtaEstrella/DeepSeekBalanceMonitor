@@ -12,7 +12,7 @@
     "Id": "com.github.wenyinos.deepseek-balance-monitor",
     "License": "MIT",
     "Name": "DeepSeek Balance Monitor",
-    "Version": "0.2.0",
+    "Version": "1.1.0",
     "Website": "https://github.com/wenyinos/DeepSeekBalanceMonitor"
   },
   "X-Plasma-API-Minimum-Version": "6.0"

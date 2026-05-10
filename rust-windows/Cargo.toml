@@ -1,6 +1,6 @@
 [package]
 name = "deepseek-balance-monitor"
-version = "0.2.0"
+version = "1.1.0"
 edition = "2021"
 rust-version = "1.77.2"
 description = "Windows tray balance monitor for the DeepSeek API"
@@ -12,6 +12,7 @@ image = { version = "=0.24.9", default-features = false, features = ["ico", "png
 imageproc = "=0.23.0"
 native-windows-gui = "=1.0.13"
 reqwest = { version = "=0.11.27", default-features = false, features = ["blocking", "json", "native-tls"] }
+rusqlite = { version = "=0.31.0", features = ["bundled"] }
 rusttype = "=0.9.3"
 serde = { version = "=1.0.197", features = ["derive"] }
 serde_json = "=1.0.114"

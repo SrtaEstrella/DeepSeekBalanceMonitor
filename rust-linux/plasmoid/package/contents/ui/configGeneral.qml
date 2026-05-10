@@ -21,7 +21,11 @@ Kirigami.FormLayout {
     }
 
     function systemLanguage() {
-        return String(Qt.locale().name).indexOf("zh") === 0 ? "zh" : "en"
+        var localeName = Qt.locale().name
+        if (!localeName || String(localeName).length === 0) {
+            return "zh"
+        }
+        return String(localeName).indexOf("zh") === 0 ? "zh" : "en"
     }
 
     function tr(key) {
@@ -30,6 +34,8 @@ Kirigami.FormLayout {
             saving: "正在保存...",
             loaded: "已加载。",
             saved: "已保存。",
+            saveFailed: "保存失败：",
+            apiKeyRequired: "DeepSeek API Key 不能为空。",
             thresholdRequired: "余额预警线不能为空。",
             loadFailed: "加载配置失败：",
             apiKey: "DeepSeek API Key:",
@@ -44,6 +50,7 @@ Kirigami.FormLayout {
             alertNever: "不提醒",
             alertAlways: "持续提醒",
             alertOnce: "仅提醒一次",
+            apiAlert: "API 服务状态变化提醒",
             logRetention: "日志和记录保留天数：",
             days: "天",
             save: "保存"
@@ -53,6 +60,8 @@ Kirigami.FormLayout {
             saving: "Saving...",
             loaded: "Loaded.",
             saved: "Saved.",
+            saveFailed: "Failed to save: ",
+            apiKeyRequired: "DeepSeek API Key is required.",
             thresholdRequired: "Balance threshold is required.",
             loadFailed: "Failed to load config: ",
             apiKey: "DeepSeek API Key:",
@@ -67,6 +76,7 @@ Kirigami.FormLayout {
             alertNever: "Never",
             alertAlways: "Always",
             alertOnce: "Once",
+            apiAlert: "API service status alerts",
             logRetention: "Log & record retention (days):",
             days: "days",
             save: "Save"
@@ -82,6 +92,10 @@ Kirigami.FormLayout {
     }
 
     function saveConfig() {
+        if (apiKeyField.text.trim().length === 0) {
+            statusText = tr("apiKeyRequired")
+            return
+        }
         var threshold = thresholdField.text.trim()
         if (threshold.length === 0) {
             statusText = tr("thresholdRequired")
@@ -96,6 +110,7 @@ Kirigami.FormLayout {
             + " " + shellQuote(languageCombo.currentValue)
             + " " + (autoStartCheck.checked ? "true" : "false")
             + " " + shellQuote(alertModeCombo.currentValue)
+            + " " + (apiAlertCheck.checked ? "true" : "false")
             + " " + logRetentionSpin.value)
     }
 
@@ -107,11 +122,10 @@ Kirigami.FormLayout {
         autoStartCheck.checked = !!config.auto_start
         var alertIndex = alertModeCombo.indexOfValue(config.alert_mode || "once")
         alertModeCombo.currentIndex = alertIndex >= 0 ? alertIndex : 0
+        apiAlertCheck.checked = config.api_alert_enabled === undefined ? true : !!config.api_alert_enabled
         logRetentionSpin.value = config.retention_days || 30
-        var defaultLanguage = config.api_key ? (cfg_language || "zh") : systemLanguage()
-        var index = languageCombo.indexOfValue(config.language === "en" && !config.api_key
-            ? defaultLanguage
-            : (config.language || defaultLanguage))
+        var selectedLanguage = config.ui_language === "zh" || config.ui_language === "en" ? config.ui_language : systemLanguage()
+        var index = languageCombo.indexOfValue(selectedLanguage)
         languageCombo.currentIndex = index >= 0 ? index : 0
         statusText = tr("loaded")
     }
@@ -139,7 +153,7 @@ Kirigami.FormLayout {
                     statusText = tr("loadFailed") + error
                 }
             } else if (String(sourceName).indexOf("set-config") !== -1) {
-                statusText = stderr.trim().length > 0 ? stderr.trim() : tr("saved")
+                statusText = stderr.trim().length > 0 ? tr("saveFailed") + stderr.trim() : tr("saved")
                 if (stderr.trim().length === 0) {
                     loadConfig()
                 }
@@ -208,6 +222,11 @@ Kirigami.FormLayout {
             { text: tr("alertAlways"), value: "always" },
             { text: tr("alertNever"), value: "never" }
         ]
+    }
+
+    QtControls.CheckBox {
+        id: apiAlertCheck
+        text: tr("apiAlert")
     }
 
     QtControls.SpinBox {

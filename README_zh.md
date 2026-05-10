@@ -89,8 +89,8 @@ cargo +1.77.2 build --release --locked
 Linux 发布包会安装 `/usr/local/bin/dsmon`、`/etc/systemd/user/dsmon.service`，并在 Plasma 6 环境中安装可选小组件：
 
 ```bash
-tar -xzf deepseek-balance-monitor-0.2.0-linux-x86_64.tar.gz
-cd deepseek-balance-monitor-0.2.0-linux-x86_64
+tar -xzf deepseek-balance-monitor-1.1-linux-x86_64.tar.gz
+cd deepseek-balance-monitor-1.1-linux-x86_64
 sudo ./install.sh
 ```
 

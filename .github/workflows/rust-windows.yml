@@ -3,9 +3,9 @@ name: Rust Windows
 on:
   push:
     branches:
-      - "rust-windows"
+      - "Rust-Dev"
     tags:
-      - "rust-v*"
+      - "rust-v[0-9]*"
     paths:
       - "rust-windows/**"
       - ".github/workflows/rust-windows.yml"
@@ -51,6 +51,11 @@ jobs:
           $version = "${env:GITHUB_REF_NAME}"
           if ($version.StartsWith("rust-v")) {
             $version = $version.Substring(6)
+          } else {
+            $version = ((cargo +1.77.2 pkgid) -split "@")[-1]
+            if ($version.EndsWith(".0")) {
+              $version = $version.Substring(0, $version.Length - 2)
+            }
           }
           $targets = @(
             @{ Triple = "x86_64-pc-windows-msvc"; Arch = "x86_64" },
@@ -68,7 +73,7 @@ jobs:
           path: rust-windows/target/*-pc-windows-msvc/release/deepseek-balance-monitor-*-windows-*.exe
 
       - name: Publish GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/rust-v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

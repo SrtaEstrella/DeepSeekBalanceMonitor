@@ -2,11 +2,12 @@
 
 #[cfg(windows)]
 mod windows_app {
-    use chrono::{DateTime, Local};
+    use chrono::{DateTime, Duration as ChronoDuration, Local, NaiveDateTime};
     use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
     use imageproc::drawing::draw_text_mut;
     use native_windows_gui as nwg;
     use reqwest::StatusCode;
+    use rusqlite::{params, Connection};
     use rusttype::{point, Font, Scale};
     use serde::{Deserialize, Serialize};
     use std::cell::RefCell;
@@ -25,6 +26,7 @@ mod windows_app {
     use std::time::Duration;
 
     const APP_NAME: &str = "DeepSeek Balance Monitor";
+    const TOP_UP_URL: &str = "https://platform.deepseek.com/top_up";
     const STARTUP_LINK_NAME: &str = "DeepSeek Balance Monitor.lnk";
     const CSIDL_STARTUP: i32 = 0x0007;
     const CSIDL_FLAG_CREATE: i32 = 0x8000;
@@ -238,6 +240,29 @@ mod windows_app {
         topped_up_balance: f64,
     }
 
+    #[derive(Clone, Debug)]
+    struct HistoryRecord {
+        timestamp: String,
+        currency: String,
+        total: f64,
+        topped: f64,
+        granted: f64,
+    }
+
+    struct HistorySummary {
+        currency: String,
+        records: usize,
+        first_time: String,
+        last_time: String,
+        latest_total: f64,
+        latest_topped: f64,
+        latest_granted: f64,
+        min_total: f64,
+        max_total: f64,
+        avg_total: f64,
+        change_total: f64,
+    }
+
     #[derive(Default)]
     struct RuntimeState {
         config: AppConfig,
@@ -246,10 +271,17 @@ mod windows_app {
         error: Option<String>,
         checking: bool,
         alert_suppressed: bool,
+        service_status: String,
+        service_status_checked: bool,
+    }
+
+    struct CheckResult {
+        balance: Result<BTreeMap<String, Balance>, String>,
+        service_status: String,
     }
 
     enum UiMessage {
-        CheckFinished(Result<BTreeMap<String, Balance>, String>),
+        CheckFinished(CheckResult),
     }
 
     #[derive(Deserialize)]
@@ -273,6 +305,32 @@ mod windows_app {
         topped_up_balance: String,
     }
 
+    #[derive(Deserialize, Default)]
+    struct StatusInfo {
+        #[serde(default)]
+        indicator: String,
+    }
+
+    #[derive(Deserialize)]
+    struct StatusPayload {
+        #[serde(default)]
+        status: StatusInfo,
+    }
+
+    #[derive(Deserialize)]
+    struct ComponentsPayload {
+        #[serde(default)]
+        components: Vec<ComponentStatus>,
+    }
+
+    #[derive(Deserialize)]
+    struct ComponentStatus {
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        status: String,
+    }
+
     fn default_currency() -> String {
         "CNY".to_string()
     }
@@ -281,6 +339,12 @@ mod windows_app {
         nwg::init().map_err(|e| e.to_string())?;
         set_ui_font();
         let ui = AppUi::build().map_err(|e| e.to_string())?;
+        if let Err(error) = prune_logs_on_startup(&ui.state.lock().unwrap().config) {
+            log_line(&format!("Log retention cleanup failed: {error}"));
+        }
+        if let Err(error) = prune_balance_history(ui.state.lock().unwrap().config.retention_days) {
+            log_line(&format!("Balance history cleanup failed: {error}"));
+        }
         log_line("Rust Windows app started");
         ui.sync_auto_start();
 
@@ -308,6 +372,7 @@ mod windows_app {
         tray_menu: nwg::Menu,
         view_item: nwg::MenuItem,
         check_item: nwg::MenuItem,
+        top_up_item: nwg::MenuItem,
         auto_start_item: nwg::MenuItem,
         settings_item: nwg::MenuItem,
         quit_item: nwg::MenuItem,
@@ -330,7 +395,7 @@ mod windows_app {
                 ..RuntimeState::default()
             }));
             let icon_path = config_dir().join("tray.ico");
-            let _ = write_tray_icon(&icon_path, "...", false);
+            let _ = write_tray_icon(&icon_path, "...", false, false);
 
             let mut window = Default::default();
             let mut icon = Default::default();
@@ -338,6 +403,7 @@ mod windows_app {
             let mut tray_menu = Default::default();
             let mut view_item = Default::default();
             let mut check_item = Default::default();
+            let mut top_up_item = Default::default();
             let mut auto_start_item = Default::default();
             let mut settings_item = Default::default();
             let mut quit_item = Default::default();
@@ -366,6 +432,10 @@ mod windows_app {
                 .parent(&tray_menu)
                 .build(&mut check_item)?;
             nwg::MenuItem::builder()
+                .text(tr(&config.language, "top_up"))
+                .parent(&tray_menu)
+                .build(&mut top_up_item)?;
+            nwg::MenuItem::builder()
                 .text(tr(&config.language, "auto_start"))
                 .check(config.auto_start)
                 .parent(&tray_menu)
@@ -391,6 +461,7 @@ mod windows_app {
                 tray_menu,
                 view_item,
                 check_item,
+                top_up_item,
                 auto_start_item,
                 settings_item,
                 quit_item,
@@ -427,6 +498,9 @@ mod windows_app {
                 }
                 nwg::Event::OnMenuItemSelected if &handle == &self.view_item => self.show_balance(),
                 nwg::Event::OnMenuItemSelected if &handle == &self.check_item => self.start_check(),
+                nwg::Event::OnMenuItemSelected if &handle == &self.top_up_item => {
+                    self.open_top_up()
+                }
                 nwg::Event::OnMenuItemSelected if &handle == &self.auto_start_item => {
                     self.toggle_auto_start()
                 }
@@ -510,12 +584,21 @@ mod windows_app {
             let tx = self.tx.clone();
             let notice = self.notice.sender();
             thread::spawn(move || {
-                let result = if config.api_key.trim().is_empty() {
+                let service_status = fetch_service_status();
+                let balance = if config.api_key.trim().is_empty() {
                     Err("No API Key configured".to_string())
                 } else {
                     fetch_balance(&config.api_key)
                 };
-                let _ = tx.send(UiMessage::CheckFinished(result));
+                if let Ok(balances) = &balance {
+                    if let Err(error) = save_balance_history(balances) {
+                        log_line(&format!("Failed to save balance history: {error}"));
+                    }
+                }
+                let _ = tx.send(UiMessage::CheckFinished(CheckResult {
+                    balance,
+                    service_status,
+                }));
                 notice.notice();
             });
         }
@@ -525,10 +608,18 @@ mod windows_app {
                 match message {
                     UiMessage::CheckFinished(result) => {
                         let mut should_notify = false;
+                        let mut should_notify_api = None;
                         {
                             let mut state = self.state.lock().unwrap();
                             state.checking = false;
-                            match result {
+                            let api_changed = state.service_status_checked
+                                && state.service_status != result.service_status;
+                            state.service_status = result.service_status;
+                            if api_changed && state.config.api_alert_enabled {
+                                should_notify_api = Some(service_degraded(&state.service_status));
+                            }
+                            state.service_status_checked = true;
+                            match result.balance {
                                 Ok(balances) => {
                                     state.balances = balances;
                                     state.last_check = Some(Local::now());
@@ -539,8 +630,14 @@ mod windows_app {
                                     log_line("Balance check succeeded");
                                 }
                                 Err(error) => {
-                                    state.balances.clear();
-                                    state.error = Some(error.clone());
+                                    if service_degraded(&state.service_status)
+                                        && !state.balances.is_empty()
+                                    {
+                                        state.error = None;
+                                    } else {
+                                        state.balances.clear();
+                                        state.error = Some(error.clone());
+                                    }
                                     log_line(&format!("Balance check failed: {error}"));
                                 }
                             }
@@ -549,21 +646,30 @@ mod windows_app {
                         if should_notify {
                             self.notify_low_balance();
                         }
+                        if let Some(degraded) = should_notify_api {
+                            self.notify_api_status_change(degraded);
+                        }
                     }
                 }
             }
         }
 
         fn update_tray(&self) {
-            let (tooltip, label, low_balance) = {
+            let (tooltip, label, low_balance, service_degraded) = {
                 let state = self.state.lock().unwrap();
                 let lang = state.config.language.as_str();
                 if state.checking {
-                    (tr(lang, "checking").to_string(), "...".to_string(), false)
+                    (
+                        tr(lang, "checking").to_string(),
+                        "...".to_string(),
+                        false,
+                        false,
+                    )
                 } else if let Some(error) = &state.error {
                     (
                         format!("{}: {}", tr(lang, "error"), error),
                         "!".to_string(),
+                        false,
                         false,
                     )
                 } else if let Some((currency, balance)) = preferred_balance(&state.balances) {
@@ -576,14 +682,22 @@ mod windows_app {
                         ),
                         icon_label(balance.total_balance),
                         is_low_balance(&state),
+                        service_degraded(&state.service_status),
                     )
                 } else {
-                    (tr(lang, "checking").to_string(), "...".to_string(), false)
+                    (
+                        tr(lang, "checking").to_string(),
+                        "...".to_string(),
+                        false,
+                        false,
+                    )
                 }
             };
 
             self.tray.set_tip(&tooltip);
-            if let Err(error) = write_tray_icon(&self.icon_path, &label, low_balance) {
+            if let Err(error) =
+                write_tray_icon(&self.icon_path, &label, low_balance, service_degraded)
+            {
                 log_line(&format!("Icon update failed: {error}"));
                 return;
             }
@@ -621,11 +735,17 @@ mod windows_app {
                 lines.push(format!(
                     "{}{}",
                     tr(lang, "service_status"),
-                    tr(lang, "status_none")
+                    service_status_text(lang, &state.service_status)
                 ));
                 (tr(lang, "bal_title").to_string(), lines.join("\n"))
             };
             self.tray.show(&message, Some(&title), None, None);
+        }
+
+        fn open_top_up(&self) {
+            if let Err(error) = open_url(TOP_UP_URL) {
+                log_line(&format!("Failed to open top-up URL: {error}"));
+            }
         }
 
         fn notify_low_balance(&self) {
@@ -653,6 +773,29 @@ mod windows_app {
             if enabled {
                 self.tray.show(&message, Some(&title), None, None);
             }
+        }
+
+        fn notify_api_status_change(&self, degraded: bool) {
+            let (title, message) = {
+                let state = self.state.lock().unwrap();
+                let lang = state.config.language.as_str();
+                if degraded {
+                    (
+                        tr(lang, "api_degraded_title").to_string(),
+                        format!(
+                            "{}{}",
+                            tr(lang, "api_degraded_msg"),
+                            service_status_text(lang, &state.service_status)
+                        ),
+                    )
+                } else {
+                    (
+                        tr(lang, "api_recovered_title").to_string(),
+                        tr(lang, "api_recovered_msg").to_string(),
+                    )
+                }
+            };
+            self.tray.show(&message, Some(&title), None, None);
         }
 
         fn show_settings(self: &Rc<Self>) {
@@ -714,6 +857,9 @@ mod windows_app {
     struct SettingsWindow {
         base_config: AppConfig,
         window: nwg::Window,
+        _tabs: nwg::TabsContainer,
+        _general_tab: nwg::Tab,
+        _history_tab: nwg::Tab,
         _api_label: nwg::Label,
         api_input: nwg::TextInput,
         show_key: nwg::CheckBox,
@@ -725,10 +871,18 @@ mod windows_app {
         language_combo: nwg::ComboBox<&'static str>,
         _alert_mode_label: nwg::Label,
         alert_mode_combo: nwg::ComboBox<&'static str>,
+        api_alerts: nwg::CheckBox,
         _retention_label: nwg::Label,
         retention_input: nwg::TextInput,
         auto_start: nwg::CheckBox,
         _status_label: nwg::Label,
+        _history_days_label: nwg::Label,
+        history_days_input: nwg::TextInput,
+        _history_currency_label: nwg::Label,
+        history_currency_input: nwg::TextInput,
+        history_box: nwg::TextBox,
+        refresh_history_button: nwg::Button,
+        export_history_button: nwg::Button,
         save_button: nwg::Button,
         cancel_button: nwg::Button,
         handler: RefCell<Option<nwg::EventHandler>>,
@@ -742,6 +896,9 @@ mod windows_app {
             let unchecked = nwg::CheckBoxState::Unchecked;
 
             let mut window = Default::default();
+            let mut tabs = Default::default();
+            let mut general_tab = Default::default();
+            let mut history_tab = Default::default();
             let mut api_label = Default::default();
             let mut api_input = Default::default();
             let mut show_key = Default::default();
@@ -753,30 +910,51 @@ mod windows_app {
             let mut language_combo = Default::default();
             let mut alert_mode_label = Default::default();
             let mut alert_mode_combo = Default::default();
+            let mut api_alerts = Default::default();
             let mut retention_label = Default::default();
             let mut retention_input = Default::default();
             let mut auto_start = Default::default();
             let mut status_label = Default::default();
+            let mut history_days_label = Default::default();
+            let mut history_days_input = Default::default();
+            let mut history_currency_label = Default::default();
+            let mut history_currency_input = Default::default();
+            let mut history_box = Default::default();
+            let mut refresh_history_button = Default::default();
+            let mut export_history_button = Default::default();
             let mut save_button = Default::default();
             let mut cancel_button = Default::default();
 
             nwg::Window::builder()
                 .flags(nwg::WindowFlags::WINDOW | nwg::WindowFlags::VISIBLE)
-                .size((520, 470))
+                .size((520, 510))
                 .center(true)
                 .title(tr(lang, "settings_title"))
                 .build(&mut window)?;
+            nwg::TabsContainer::builder()
+                .position((10, 10))
+                .size((500, 425))
+                .parent(&window)
+                .build(&mut tabs)?;
+            nwg::Tab::builder()
+                .text(tr(lang, "settings_tab"))
+                .parent(&tabs)
+                .build(&mut general_tab)?;
+            nwg::Tab::builder()
+                .text(tr(lang, "history_tab"))
+                .parent(&tabs)
+                .build(&mut history_tab)?;
             nwg::Label::builder()
                 .text(tr(lang, "api_key_label"))
                 .position((20, 20))
                 .size((460, 22))
-                .parent(&window)
+                .parent(&general_tab)
                 .build(&mut api_label)?;
             nwg::TextInput::builder()
                 .text(&config.api_key)
                 .position((20, 48))
                 .size((460, 28))
-                .parent(&window)
+                .parent(&general_tab)
                 .focus(true)
                 .build(&mut api_input)?;
             api_input.set_password_char(Some('*'));
@@ -784,51 +962,51 @@ mod windows_app {
                 .text(tr(lang, "show_key"))
                 .position((20, 82))
                 .size((180, 24))
-                .parent(&window)
+                .parent(&general_tab)
                 .check_state(unchecked)
                 .build(&mut show_key)?;
             nwg::Label::builder()
                 .text(tr(lang, "interval_label"))
                 .position((20, 120))
                 .size((220, 22))
-                .parent(&window)
+                .parent(&general_tab)
                 .build(&mut interval_label)?;
             nwg::TextInput::builder()
                 .text(&config.interval_minutes.to_string())
                 .position((250, 116))
                 .size((100, 28))
-                .parent(&window)
+                .parent(&general_tab)
                 .build(&mut interval_input)?;
             nwg::Label::builder()
                 .text(tr(lang, "threshold_label"))
                 .position((20, 158))
                 .size((220, 22))
-                .parent(&window)
+                .parent(&general_tab)
                 .build(&mut threshold_label)?;
             nwg::TextInput::builder()
                 .text(&format!("{:.2}", config.threshold_yuan))
                 .position((250, 154))
                 .size((100, 28))
-                .parent(&window)
+                .parent(&general_tab)
                 .build(&mut threshold_input)?;
             nwg::Label::builder()
                 .text(tr(lang, "language_label"))
                 .position((20, 196))
                 .size((220, 22))
-                .parent(&window)
+                .parent(&general_tab)
                 .build(&mut language_label)?;
             nwg::ComboBox::builder()
                 .collection(vec!["中文", "English"])
                 .selected_index(Some(if config.language == "en" { 1 } else { 0 }))
                 .position((250, 192))
                 .size((140, 100))
-                .parent(&window)
+                .parent(&general_tab)
                 .build(&mut language_combo)?;
             nwg::CheckBox::builder()
                 .text(tr(lang, "auto_start"))
-                .position((20, 310))
+                .position((20, 348))
                 .size((220, 24))
-                .parent(&window)
+                .parent(&general_tab)
                 .check_state(if config.auto_start {
                     checked
                 } else {
@@ -839,7 +1017,7 @@ mod windows_app {
                 .text(tr(lang, "alert_mode_label"))
                 .position((20, 235))
                 .size((220, 22))
-                .parent(&window)
+                .parent(&general_tab)
                 .build(&mut alert_mode_label)?;
             nwg::ComboBox::builder()
                 .collection(vec![
@@ -854,37 +1032,100 @@ mod windows_app {
                 }))
                 .position((250, 231))
                 .size((140, 100))
-                .parent(&window)
+                .parent(&general_tab)
                 .build(&mut alert_mode_combo)?;
             nwg::Label::builder()
                 .text(tr(lang, "retention_label"))
-                .position((20, 273))
+                .position((20, 311))
                 .size((220, 22))
-                .parent(&window)
+                .parent(&general_tab)
                 .build(&mut retention_label)?;
             nwg::TextInput::builder()
                 .text(&config.retention_days.to_string())
-                .position((250, 269))
+                .position((250, 307))
                 .size((100, 28))
-                .parent(&window)
+                .parent(&general_tab)
                 .build(&mut retention_input)?;
+            nwg::CheckBox::builder()
+                .text(tr(lang, "api_alert_label"))
+                .position((20, 273))
+                .size((260, 24))
+                .parent(&general_tab)
+                .check_state(if config.api_alert_enabled {
+                    checked
+                } else {
+                    unchecked
+                })
+                .build(&mut api_alerts)?;
 
             let status = app.status_line();
             nwg::Label::builder()
                 .text(&status)
-                .position((20, 350))
+                .position((20, 388))
                 .size((460, 38))
-                .parent(&window)
+                .parent(&general_tab)
                 .build(&mut status_label)?;
+            let history_text = format_history_view(lang, config.retention_days, None);
+            nwg::Label::builder()
+                .text(tr(lang, "history_days"))
+                .position((20, 20))
+                .size((45, 22))
+                .parent(&history_tab)
+                .build(&mut history_days_label)?;
+            nwg::TextInput::builder()
+                .text(&config.retention_days.to_string())
+                .position((70, 16))
+                .size((55, 28))
+                .parent(&history_tab)
+                .build(&mut history_days_input)?;
+            nwg::Label::builder()
+                .text(tr(lang, "history_currency_filter"))
+                .position((140, 20))
+                .size((60, 22))
+                .parent(&history_tab)
+                .build(&mut history_currency_label)?;
+            nwg::TextInput::builder()
+                .text("all")
+                .position((205, 16))
+                .size((70, 28))
+                .parent(&history_tab)
+                .build(&mut history_currency_input)?;
+            nwg::Button::builder()
+                .text(tr(lang, "refresh"))
+                .position((290, 16))
+                .size((86, 30))
+                .parent(&history_tab)
+                .build(&mut refresh_history_button)?;
+            nwg::Button::builder()
+                .text(tr(lang, "export"))
+                .position((385, 16))
+                .size((86, 30))
+                .parent(&history_tab)
+                .build(&mut export_history_button)?;
+            nwg::TextBox::builder()
+                .text(&history_text)
+                .flags(
+                    nwg::TextBoxFlags::VISIBLE
+                        | nwg::TextBoxFlags::VSCROLL
+                        | nwg::TextBoxFlags::HSCROLL
+                        | nwg::TextBoxFlags::AUTOVSCROLL
+                        | nwg::TextBoxFlags::AUTOHSCROLL
+                        | nwg::TextBoxFlags::TAB_STOP,
+                )
+                .readonly(true)
+                .position((20, 58))
+                .size((455, 330))
+                .parent(&history_tab)
+                .build(&mut history_box)?;
             nwg::Button::builder()
                 .text(tr(lang, "save"))
-                .position((300, 410))
+                .position((300, 450))
                 .size((86, 30))
                 .parent(&window)
                 .build(&mut save_button)?;
             nwg::Button::builder()
                 .text(tr(lang, "cancel"))
-                .position((395, 410))
+                .position((395, 450))
                 .size((86, 30))
                 .parent(&window)
                 .build(&mut cancel_button)?;
@@ -892,6 +1133,9 @@ mod windows_app {
             let settings = Rc::new(Self {
                 base_config: config.clone(),
                 window,
+                _tabs: tabs,
+                _general_tab: general_tab,
+                _history_tab: history_tab,
                 _api_label: api_label,
                 api_input,
                 show_key,
@@ -903,10 +1147,18 @@ mod windows_app {
                 language_combo,
                 _alert_mode_label: alert_mode_label,
                 alert_mode_combo,
+                api_alerts,
                 _retention_label: retention_label,
                 retention_input,
                 auto_start,
                 _status_label: status_label,
+                _history_days_label: history_days_label,
+                history_days_input,
+                _history_currency_label: history_currency_label,
+                history_currency_input,
+                history_box,
+                refresh_history_button,
+                export_history_button,
                 save_button,
                 cancel_button,
                 handler: RefCell::new(None),
@@ -936,6 +1188,14 @@ mod windows_app {
                                 settings.api_input.set_password_char(Some('*'));
                             }
                         }
+                        nwg::Event::OnButtonClick
+                            if &handle == &settings.refresh_history_button =>
+                        {
+                            settings.refresh_history();
+                        }
+                        nwg::Event::OnButtonClick if &handle == &settings.export_history_button => {
+                            settings.export_history();
+                        }
                         nwg::Event::OnButtonClick if &handle == &settings.save_button => {
                             match settings.read_config() {
                                 Ok(config) => {
@@ -943,9 +1203,10 @@ mod windows_app {
                                     app.settings_closed();
                                 }
                                 Err(message) => {
+                                    let lang = settings.current_language();
                                     nwg::modal_error_message(
                                         &settings.window,
-                                        tr("zh", "warn_title"),
+                                        tr(&lang, "warn_title"),
                                         &message,
                                     );
                                 }
@@ -958,38 +1219,86 @@ mod windows_app {
             Ok(settings)
         }
 
+        fn refresh_history(&self) {
+            let (days, currency) = self.history_filters();
+            let text = format_history_view(&self.current_language(), days, currency.as_deref());
+            self.history_box.set_text(&text);
+        }
+
+        fn export_history(&self) {
+            let (days, currency) = self.history_filters();
+            let lang = self.current_language();
+            match export_balance_history(days, currency.as_deref()) {
+                Ok(path) => self.history_box.set_text(&format!(
+                    "{} {}",
+                    tr(&lang, "export_success"),
+                    path.display()
+                )),
+                Err(error) => self
+                    .history_box
+                    .set_text(&format!("{} {error}", tr(&lang, "export_failed"))),
+            }
+        }
+
+        fn history_filters(&self) -> (u64, Option<String>) {
+            let days = self
+                .history_days_input
+                .text()
+                .trim()
+                .parse::<u64>()
+                .unwrap_or(self.base_config.retention_days)
+                .clamp(1, 3650);
+            let currency = self.history_currency_input.text();
+            let currency = currency.trim();
+            let currency = if currency.is_empty() || currency.eq_ignore_ascii_case("all") {
+                None
+            } else {
+                Some(currency.to_string())
+            };
+            (days, currency)
+        }
+
+        fn current_language(&self) -> String {
+            if self.language_combo.selection() == Some(1) {
+                "en".to_string()
+            } else {
+                "zh".to_string()
+            }
+        }
+
         fn read_config(&self) -> Result<AppConfig, String> {
             let mut config = self.base_config.clone();
+            let lang = self.current_language();
             let api_key = self.api_input.text().trim().to_string();
             if api_key.is_empty() {
-                return Err("API Key 不能为空".to_string());
+                return Err(tr(&lang, "api_key_empty").to_string());
             }
             let interval_minutes = self
                 .interval_input
                 .text()
                 .trim()
                 .parse::<u64>()
-                .map_err(|_| "查询间隔必须是数字".to_string())?;
+                .map_err(|_| tr(&lang, "interval_number").to_string())?;
             if !(1..=1440).contains(&interval_minutes) {
-                return Err("查询间隔必须在 1 到 1440 分钟之间".to_string());
+                return Err(tr(&lang, "interval_range").to_string());
             }
             let threshold_yuan = self
                 .threshold_input
                 .text()
                 .trim()
                 .parse::<f64>()
-                .map_err(|_| "余额预警线必须是数字".to_string())?;
+                .map_err(|_| tr(&lang, "threshold_number").to_string())?;
             if !(0.0..=10000.0).contains(&threshold_yuan) {
-                return Err("余额预警线必须在 0 到 10000 之间".to_string());
+                return Err(tr(&lang, "threshold_range").to_string());
             }
             let retention_days = self
                 .retention_input
                 .text()
                 .trim()
                 .parse::<u64>()
-                .map_err(|_| "保留天数必须是数字".to_string())?;
+                .map_err(|_| tr(&lang, "retention_number").to_string())?;
             if !(1..=3650).contains(&retention_days) {
-                return Err("保留天数必须在 1 到 3650 天之间".to_string());
+                return Err(tr(&lang, "retention_range").to_string());
             }
             config.api_key = api_key;
             config.interval_minutes = interval_minutes;
@@ -1000,6 +1309,7 @@ mod windows_app {
                 "zh".to_string()
             };
             config.auto_start = self.auto_start.check_state() == nwg::CheckBoxState::Checked;
+            config.api_alert_enabled = self.api_alerts.check_state() == nwg::CheckBoxState::Checked;
             config.alert_mode = match self.alert_mode_combo.selection() {
                 Some(1) => "always",
                 Some(2) => "never",
@@ -1080,6 +1390,53 @@ mod windows_app {
         Ok(balances)
     }
 
+    fn fetch_service_status() -> String {
+        let Ok(client) = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+        else {
+            return "unknown".to_string();
+        };
+        let mut status = fetch_overall_status(&client).unwrap_or("unknown");
+        if let Some(api_status) = fetch_api_component_status(&client) {
+            if status_rank(api_status) > status_rank(status) {
+                status = api_status;
+            }
+        }
+        status.to_string()
+    }
+
+    fn fetch_overall_status(client: &reqwest::blocking::Client) -> Option<&'static str> {
+        let payload: StatusPayload = client
+            .get("https://status.deepseek.com/api/v2/status.json")
+            .header("Accept", "application/json")
+            .send()
+            .ok()?
+            .error_for_status()
+            .ok()?
+            .json()
+            .ok()?;
+        Some(normalize_service_status(&payload.status.indicator))
+    }
+
+    fn fetch_api_component_status(client: &reqwest::blocking::Client) -> Option<&'static str> {
+        let payload: ComponentsPayload = client
+            .get("https://status.deepseek.com/api/v2/components.json")
+            .header("Accept", "application/json")
+            .send()
+            .ok()?
+            .error_for_status()
+            .ok()?
+            .json()
+            .ok()?;
+        payload
+            .components
+            .into_iter()
+            .filter(|item| item.name.to_ascii_lowercase().contains("api"))
+            .map(|item| normalize_service_status(&item.status))
+            .max_by_key(|status| status_rank(status))
+    }
+
     fn parse_amount(value: &str) -> f64 {
         value.parse::<f64>().unwrap_or(0.0)
     }
@@ -1088,8 +1445,53 @@ mod windows_app {
         format!("{value:.2}")
     }
 
+    fn format_signed_amount(value: f64) -> String {
+        if value >= 0.0 {
+            format!("+{}", format_amount(value))
+        } else {
+            format_amount(value)
+        }
+    }
+
     fn preferred_balance(balances: &BTreeMap<String, Balance>) -> Option<(&String, &Balance)> {
         balances.iter().next()
+    }
+
+    fn normalize_service_status(value: &str) -> &'static str {
+        match value {
+            "none" | "operational" => "none",
+            "minor" | "degraded_performance" => "minor",
+            "major" | "partial_outage" => "major",
+            "critical" | "major_outage" => "critical",
+            "maintenance" | "under_maintenance" => "maintenance",
+            _ => "unknown",
+        }
+    }
+
+    fn status_rank(status: &str) -> u8 {
+        match status {
+            "none" => 0,
+            "maintenance" => 1,
+            "minor" => 2,
+            "major" => 3,
+            "critical" => 4,
+            _ => 5,
+        }
+    }
+
+    fn service_degraded(status: &str) -> bool {
+        status != "none"
+    }
+
+    fn service_status_text(lang: &str, status: &str) -> &'static str {
+        match status {
+            "none" => tr(lang, "status_none"),
+            "minor" => tr(lang, "status_minor"),
+            "major" => tr(lang, "status_major"),
+            "critical" => tr(lang, "status_critical"),
+            "maintenance" => tr(lang, "status_maintenance"),
+            _ => tr(lang, "status_unknown"),
+        }
     }
 
     fn is_low_balance(state: &RuntimeState) -> bool {
@@ -1143,12 +1545,18 @@ mod windows_app {
         }
     }
 
-    fn write_tray_icon(path: &Path, label: &str, low_balance: bool) -> Result<(), String> {
+    fn write_tray_icon(
+        path: &Path,
+        label: &str,
+        low_balance: bool,
+        service_degraded: bool,
+    ) -> Result<(), String> {
         ensure_dir(&config_dir()).map_err(|e| e.to_string())?;
         let fill = match label {
             "!" => Rgba([185, 70, 60, 255]),
             "..." => Rgba([105, 105, 110, 255]),
             _ if low_balance => Rgba([185, 70, 60, 255]),
+            _ if service_degraded => Rgba([138, 128, 120, 255]),
             _ => Rgba([60, 105, 102, 255]),
         };
         let mut image = RgbaImage::from_pixel(64, 64, Rgba([0, 0, 0, 0]));
@@ -1270,6 +1678,19 @@ mod windows_app {
         config_dir().join("app.log")
     }
 
+    fn db_file() -> PathBuf {
+        config_dir().join("balance_history.db")
+    }
+
+    fn history_export_file() -> PathBuf {
+        let documents = std::env::var_os("USERPROFILE")
+            .map(PathBuf::from)
+            .map(|path| path.join("Documents"))
+            .filter(|path| path.exists())
+            .unwrap_or_else(config_dir);
+        documents.join("deepseek-balance-history.csv")
+    }
+
     fn ensure_dir(path: &Path) -> std::io::Result<()> {
         fs::create_dir_all(path)
     }
@@ -1329,9 +1750,13 @@ mod windows_app {
     }
 
     fn open_config_file() -> Result<(), String> {
+        open_url(path_text(&config_file()).as_str())
+    }
+
+    fn open_url(target: &str) -> Result<(), String> {
         Command::new("cmd")
             .args(["/C", "start", ""])
-            .arg(config_file())
+            .arg(target)
             .spawn()
             .map(|_| ())
             .map_err(|e| e.to_string())
@@ -1353,6 +1778,321 @@ mod windows_app {
                 message
             );
         }
+    }
+
+    fn save_balance_history(balances: &BTreeMap<String, Balance>) -> Result<(), String> {
+        let mut conn = open_history_db()?;
+        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        for (currency, balance) in balances {
+            tx.execute(
+                "INSERT INTO balance_history (timestamp, currency, total, topped, granted) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    &timestamp,
+                    currency.as_str(),
+                    balance.total_balance,
+                    balance.topped_up_balance,
+                    balance.granted_balance
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())
+    }
+
+    fn recent_balance_history(days: u64, limit: usize) -> Result<Vec<HistoryRecord>, String> {
+        history_records(days, None, limit)
+    }
+
+    fn history_records(
+        days: u64,
+        currency: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<HistoryRecord>, String> {
+        let conn = open_history_db()?;
+        let cutoff = (Local::now() - ChronoDuration::days(days as i64))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut stmt;
+        let rows = if let Some(currency) = currency {
+            stmt = conn
+                .prepare(
+                    "SELECT timestamp, currency, total, topped, granted FROM balance_history \
+                     WHERE timestamp >= ?1 AND currency = ?2 ORDER BY timestamp ASC LIMIT ?3",
+                )
+                .map_err(|e| e.to_string())?;
+            stmt.query_map(params![cutoff, currency, limit], history_record_from_row)
+                .map_err(|e| e.to_string())?
+        } else {
+            stmt = conn
+                .prepare(
+                    "SELECT timestamp, currency, total, topped, granted FROM balance_history \
+                     WHERE timestamp >= ?1 ORDER BY timestamp ASC LIMIT ?2",
+                )
+                .map_err(|e| e.to_string())?;
+            stmt.query_map(params![cutoff, limit], history_record_from_row)
+                .map_err(|e| e.to_string())?
+        };
+        let mut records = Vec::new();
+        for row in rows {
+            records.push(row.map_err(|e| e.to_string())?);
+        }
+        Ok(records)
+    }
+
+    fn history_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryRecord> {
+        Ok(HistoryRecord {
+            timestamp: row.get(0)?,
+            currency: row.get(1)?,
+            total: row.get(2)?,
+            topped: row.get(3)?,
+            granted: row.get(4)?,
+        })
+    }
+
+    fn format_history_view(lang: &str, days: u64, currency: Option<&str>) -> String {
+        let records = history_records(days, currency, usize::MAX).unwrap_or_default();
+        if records.is_empty() {
+            return tr(lang, "history_empty").to_string();
+        }
+        let mut lines = vec![format!(
+            "{}: {} | {}: {}",
+            tr(lang, "history_days"),
+            days,
+            tr(lang, "history_currency_filter"),
+            currency.unwrap_or_else(|| tr(lang, "history_all"))
+        )];
+        for item in summarize_history(&records) {
+            lines.push(format!(
+                "{}: {} | {} {} | {} {} | {} {}/{} | {} {} | {} {}",
+                item.currency,
+                item.records,
+                tr(lang, "history_trend"),
+                trend_label(lang, item.change_total),
+                tr(lang, "history_total"),
+                format_amount(item.latest_total),
+                tr(lang, "history_range"),
+                format_amount(item.min_total),
+                format_amount(item.max_total),
+                tr(lang, "history_avg"),
+                format_amount(item.avg_total),
+                tr(lang, "history_change"),
+                format_signed_amount(item.change_total)
+            ));
+            lines.push(format!(
+                "  {} - {} | {} {} | {} {}",
+                item.first_time,
+                item.last_time,
+                tr(lang, "topped_up"),
+                format_amount(item.latest_topped),
+                tr(lang, "granted"),
+                format_amount(item.latest_granted)
+            ));
+        }
+        lines.push(String::new());
+        lines.push(tr(lang, "history_chart").to_string());
+        lines.extend(history_chart(lang, &records));
+        lines.join("\r\n")
+    }
+
+    fn summarize_history(records: &[HistoryRecord]) -> Vec<HistorySummary> {
+        let mut grouped: BTreeMap<String, Vec<&HistoryRecord>> = BTreeMap::new();
+        for record in records {
+            grouped
+                .entry(record.currency.clone())
+                .or_default()
+                .push(record);
+        }
+        grouped
+            .into_iter()
+            .filter_map(|(currency, items)| {
+                let first = items.first()?;
+                let latest = items.last()?;
+                let min_total = items
+                    .iter()
+                    .map(|record| record.total)
+                    .fold(f64::INFINITY, f64::min);
+                let max_total = items
+                    .iter()
+                    .map(|record| record.total)
+                    .fold(f64::NEG_INFINITY, f64::max);
+                let avg_total =
+                    items.iter().map(|record| record.total).sum::<f64>() / items.len() as f64;
+                Some(HistorySummary {
+                    currency,
+                    records: items.len(),
+                    first_time: first.timestamp.clone(),
+                    last_time: latest.timestamp.clone(),
+                    latest_total: latest.total,
+                    latest_topped: latest.topped,
+                    latest_granted: latest.granted,
+                    min_total,
+                    max_total,
+                    avg_total,
+                    change_total: latest.total - first.total,
+                })
+            })
+            .collect()
+    }
+
+    fn history_chart(lang: &str, records: &[HistoryRecord]) -> Vec<String> {
+        let points: Vec<&HistoryRecord> = records.iter().rev().take(24).collect();
+        let points: Vec<&HistoryRecord> = points.into_iter().rev().collect();
+        let min_total = points
+            .iter()
+            .map(|record| record.total)
+            .fold(f64::INFINITY, f64::min);
+        let max_total = points
+            .iter()
+            .map(|record| record.total)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let span = (max_total - min_total).max(0.01);
+        let width = 54_usize;
+        let height = 10_usize;
+        let mut grid = vec![vec![' '; width]; height];
+        for (index, record) in points.iter().enumerate() {
+            let x = if points.len() == 1 {
+                width / 2
+            } else {
+                index * (width - 1) / (points.len() - 1)
+            };
+            let y = height
+                - 1
+                - (((record.total - min_total) / span) * (height - 1) as f64).round() as usize;
+            grid[y][x] = '*';
+        }
+        let mut lines = Vec::new();
+        lines.push(format!(
+            "Y {}: {}",
+            tr(lang, "history_total"),
+            format_amount(max_total)
+        ));
+        for (row_index, row) in grid.into_iter().enumerate() {
+            let value = max_total - span * row_index as f64 / (height - 1) as f64;
+            let label = if row_index == 0 || row_index == height / 2 || row_index == height - 1 {
+                format!("{:>10}", format_amount(value))
+            } else {
+                " ".repeat(10)
+            };
+            lines.push(format!("{label} |{}", row.into_iter().collect::<String>()));
+        }
+        lines.push(format!("{} +{}", " ".repeat(10), "-".repeat(width)));
+        if let (Some(first), Some(last)) = (points.first(), points.last()) {
+            lines.push(format!("X {} -> {}", first.timestamp, last.timestamp));
+        }
+        lines
+    }
+
+    fn trend_label(lang: &str, value: f64) -> &'static str {
+        if value > 0.000001 {
+            tr(lang, "history_rising")
+        } else if value < -0.000001 {
+            tr(lang, "history_falling")
+        } else {
+            tr(lang, "history_flat")
+        }
+    }
+
+    fn export_balance_history(days: u64, currency: Option<&str>) -> Result<PathBuf, String> {
+        let records = history_records(days, currency, usize::MAX)?;
+        let path = history_export_file();
+        if let Some(parent) = path.parent() {
+            ensure_dir(parent).map_err(|e| e.to_string())?;
+        }
+        fs::write(&path, history_csv(&records)).map_err(|e| e.to_string())?;
+        Ok(path)
+    }
+
+    fn history_csv(records: &[HistoryRecord]) -> String {
+        let mut lines = vec!["timestamp,currency,total,topped,granted".to_string()];
+        for record in records {
+            lines.push(format!(
+                "{},{},{},{},{}",
+                csv_escape(&record.timestamp),
+                csv_escape(&record.currency),
+                format_amount(record.total),
+                format_amount(record.topped),
+                format_amount(record.granted)
+            ));
+        }
+        lines.join("\n") + "\n"
+    }
+
+    fn csv_escape(value: &str) -> String {
+        if value.contains(|ch| ch == ',' || ch == '"' || ch == '\n') {
+            format!("\"{}\"", value.replace('"', "\"\""))
+        } else {
+            value.to_string()
+        }
+    }
+
+    fn prune_balance_history(retention_days: u64) -> Result<(), String> {
+        let conn = open_history_db()?;
+        let cutoff = (Local::now() - ChronoDuration::days(retention_days as i64))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        conn.execute(
+            "DELETE FROM balance_history WHERE timestamp < ?1",
+            params![cutoff],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn open_history_db() -> Result<Connection, String> {
+        ensure_dir(&config_dir()).map_err(|e| e.to_string())?;
+        let conn = Connection::open(db_file()).map_err(|e| e.to_string())?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS balance_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                currency TEXT NOT NULL,
+                total REAL NOT NULL,
+                topped REAL NOT NULL,
+                granted REAL NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(conn)
+    }
+
+    fn prune_logs_on_startup(config: &AppConfig) -> std::io::Result<()> {
+        ensure_dir(&config_dir())?;
+        prune_log_file(&log_file(), config.retention_days)
+    }
+
+    fn prune_log_file(path: &Path, retention_days: u64) -> std::io::Result<()> {
+        let content = match fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let cutoff = Local::now().naive_local() - ChronoDuration::days(retention_days as i64);
+        let mut changed = false;
+        let mut retained = String::new();
+        for line in content.lines() {
+            if keep_log_line(line, cutoff) {
+                retained.push_str(line);
+                retained.push('\n');
+            } else {
+                changed = true;
+            }
+        }
+        if changed {
+            fs::write(path, retained)?;
+        }
+        Ok(())
+    }
+
+    fn keep_log_line(line: &str, cutoff: NaiveDateTime) -> bool {
+        let Some(timestamp) = line.strip_prefix('[').and_then(|rest| rest.get(..19)) else {
+            return true;
+        };
+        NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%d %H:%M:%S")
+            .map(|logged_at| logged_at >= cutoff)
+            .unwrap_or(true)
     }
 
     fn set_auto_start(enable: bool) -> Result<(), String> {
@@ -1491,9 +2231,12 @@ mod windows_app {
             ("en", "error") => "Error",
             ("en", "view_balance") => "View Balance",
             ("en", "check_now") => "Check Now",
+            ("en", "top_up") => "Top Up",
             ("en", "settings") => "Settings...",
             ("en", "quit") => "Quit",
             ("en", "settings_title") => "DeepSeek Balance Monitor - Settings",
+            ("en", "settings_tab") => "Settings",
+            ("en", "history_tab") => "History",
             ("en", "api_key_label") => "DeepSeek API Key:",
             ("en", "show_key") => "Show API Key",
             ("en", "interval_label") => "Check interval (minutes, 1-1440):",
@@ -1504,19 +2247,54 @@ mod windows_app {
             ("en", "alert_mode_never") => "Never",
             ("en", "alert_mode_always") => "Always",
             ("en", "alert_mode_once") => "Once",
+            ("en", "api_alert_label") => "API service status alerts",
             ("en", "retention_label") => "Log & record retention (days):",
             ("en", "save") => "Save",
             ("en", "cancel") => "Cancel",
+            ("en", "refresh") => "Refresh",
+            ("en", "export") => "Export",
+            ("en", "export_success") => "Exported:",
+            ("en", "export_failed") => "Export failed:",
+            ("en", "history_days") => "Days",
+            ("en", "history_currency_filter") => "Currency",
+            ("en", "history_all") => "All",
+            ("en", "history_chart") => "Trend",
+            ("en", "history_page") => "Page",
+            ("en", "history_trend") => "Trend",
+            ("en", "history_rising") => "Rising",
+            ("en", "history_falling") => "Falling",
+            ("en", "history_flat") => "Flat",
+            ("en", "history_range") => "Range",
+            ("en", "history_avg") => "Average",
+            ("en", "history_change") => "Change",
+            ("en", "prev_page") => "Previous",
+            ("en", "next_page") => "Next",
+            ("en", "api_key_empty") => "API Key is required.",
+            ("en", "interval_number") => "Check interval must be a number.",
+            ("en", "interval_range") => "Check interval must be between 1 and 1440 minutes.",
+            ("en", "threshold_number") => "Low balance threshold must be a number.",
+            ("en", "threshold_range") => "Low balance threshold must be between 0 and 10000.",
+            ("en", "retention_number") => "Retention days must be a number.",
+            ("en", "retention_range") => "Retention days must be between 1 and 3650.",
             ("en", "not_checked") => "Not checked",
             ("en", "total_balance") => "Total balance",
             ("en", "topped_up") => "Topped",
             ("en", "granted") => "Granted",
             ("en", "last_check") => "Last check",
+            ("en", "history_empty") => "No balance history.",
+            ("en", "history_time") => "Time",
+            ("en", "history_currency") => "Currency",
+            ("en", "history_total") => "Total",
             ("en", "balance_title") => "DeepSeek Balance",
             ("en", "bal_title") => "DeepSeek Balance:",
             ("en", "query_error") => "Query error",
             ("en", "service_status") => "DeepSeek API Status:",
             ("en", "status_none") => "🟢 All Systems Operational",
+            ("en", "status_minor") => "🟡 Minor Outage",
+            ("en", "status_major") => "🟠 Major Outage",
+            ("en", "status_critical") => "🔴 Critical Outage",
+            ("en", "status_maintenance") => "🔧 Under Maintenance",
+            ("en", "status_unknown") => "⚪ Status Unknown",
             ("en", "balance_empty") => {
                 "No balance data yet. Click Check Now or wait for the next check."
             }
@@ -1528,14 +2306,21 @@ mod windows_app {
             ("en", "api_key_missing_body") => {
                 "Enter api_key in config.json. It stays on this computer and is not sent to the developer."
             }
+            ("en", "api_degraded_title") => "⚠ DeepSeek API Degraded",
+            ("en", "api_degraded_msg") => "API service status has changed: ",
+            ("en", "api_recovered_title") => "✅ DeepSeek API Recovered",
+            ("en", "api_recovered_msg") => "API service is back to normal.",
             ("en", "warn_title") => "Warning",
             (_, "checking") => "查询中...",
             (_, "error") => "错误",
             (_, "view_balance") => "查看余额",
             (_, "check_now") => "立即查询",
+            (_, "top_up") => "充值",
             (_, "settings") => "设置...",
             (_, "quit") => "退出",
             (_, "settings_title") => "DeepSeek Balance Monitor - 设置",
+            (_, "settings_tab") => "设置",
+            (_, "history_tab") => "历史",
             (_, "api_key_label") => "DeepSeek API Key:",
             (_, "show_key") => "显示 API Key",
             (_, "interval_label") => "查询间隔（分钟，1-1440）：",
@@ -1546,19 +2331,54 @@ mod windows_app {
             (_, "alert_mode_never") => "不提醒",
             (_, "alert_mode_always") => "持续提醒",
             (_, "alert_mode_once") => "仅提醒一次",
+            (_, "api_alert_label") => "API 服务状态变化提醒",
             (_, "retention_label") => "日志和记录保留天数：",
             (_, "save") => "保存",
             (_, "cancel") => "取消",
+            (_, "refresh") => "刷新",
+            (_, "export") => "导出",
+            (_, "export_success") => "已导出：",
+            (_, "export_failed") => "导出失败：",
+            (_, "history_days") => "天数",
+            (_, "history_currency_filter") => "币种",
+            (_, "history_all") => "全部",
+            (_, "history_chart") => "趋势图",
+            (_, "history_page") => "第",
+            (_, "history_trend") => "趋势",
+            (_, "history_rising") => "上升",
+            (_, "history_falling") => "下降",
+            (_, "history_flat") => "持平",
+            (_, "history_range") => "范围",
+            (_, "history_avg") => "平均",
+            (_, "history_change") => "变化",
+            (_, "prev_page") => "上一页",
+            (_, "next_page") => "下一页",
+            (_, "api_key_empty") => "API Key 不能为空。",
+            (_, "interval_number") => "查询间隔必须是数字。",
+            (_, "interval_range") => "查询间隔必须在 1 到 1440 分钟之间。",
+            (_, "threshold_number") => "余额预警线必须是数字。",
+            (_, "threshold_range") => "余额预警线必须在 0 到 10000 之间。",
+            (_, "retention_number") => "保留天数必须是数字。",
+            (_, "retention_range") => "保留天数必须在 1 到 3650 天之间。",
             (_, "not_checked") => "尚未查询",
             (_, "total_balance") => "总余额",
             (_, "topped_up") => "充值",
             (_, "granted") => "赠送",
             (_, "last_check") => "上次查询",
+            (_, "history_empty") => "暂无余额历史。",
+            (_, "history_time") => "时间",
+            (_, "history_currency") => "币种",
+            (_, "history_total") => "总余额",
             (_, "balance_title") => "DeepSeek 余额",
             (_, "bal_title") => "DeepSeek 余额：",
             (_, "query_error") => "查询出错",
             (_, "service_status") => "DeepSeek API 服务状态：",
             (_, "status_none") => "🟢 服务正常",
+            (_, "status_minor") => "🟡 轻微异常",
+            (_, "status_major") => "🟠 严重异常",
+            (_, "status_critical") => "🔴 关键不可用",
+            (_, "status_maintenance") => "🔧 维护中",
+            (_, "status_unknown") => "⚪ 服务状态未知",
             (_, "balance_empty") => "尚未查询到余额，请稍后或点击立即查询。",
             (_, "balance_error_title") => "DeepSeek 余额 - 错误",
             (_, "low_balance_title") => "DeepSeek 余额不足",
@@ -1568,6 +2388,10 @@ mod windows_app {
             (_, "api_key_missing_body") => {
                 "请在 config.json 填写 api_key。配置仅保存在本机，开发者不会获取。"
             }
+            (_, "api_degraded_title") => "⚠ DeepSeek API 服务异常",
+            (_, "api_degraded_msg") => "检测到 API 服务状态异常：",
+            (_, "api_recovered_title") => "✅ DeepSeek API 服务恢复",
+            (_, "api_recovered_msg") => "API 服务已恢复正常。",
             (_, "warn_title") => "警告",
             _ => "",
         }
