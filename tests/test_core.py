@@ -1,11 +1,17 @@
 import tempfile
 import urllib.error
 import unittest
+import sys
 from pathlib import Path
 from unittest.mock import patch
 from src import api_client
 from src.app_state import AppState
-from src.mac.keystore import decrypt_api_key, encrypt_api_key
+
+# Skip macOS-specific tests on non-macOS platforms
+if sys.platform == "darwin":
+    from src.mac.keystore import decrypt_api_key, encrypt_api_key
+else:
+    decrypt_api_key = encrypt_api_key = None
 
 class ApiClientTests(unittest.TestCase):
     def test_fetch_balance_parses_currency_amounts(self):
@@ -66,6 +72,7 @@ class AppStateTests(unittest.TestCase):
         state.service_status = {"api_operational": True}
         self.assertEqual(state.check_api_status_alert(), "recovered")
 
+@unittest.skipUnless(sys.platform == "darwin", "macOS only")
 class MacKeystoreTests(unittest.TestCase):
     def test_mac_keystore_round_trip_and_wrong_key_returns_empty(self):
         with tempfile.TemporaryDirectory() as data, tempfile.TemporaryDirectory() as other:
