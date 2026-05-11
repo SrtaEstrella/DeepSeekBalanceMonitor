@@ -2,7 +2,7 @@ use chrono::{Duration as ChronoDuration, Local};
 use rusqlite::{params, Connection};
 use std::collections::BTreeMap;
 
-use super::{format_time, Balance, ConsumptionRate, HistoryRecord};
+use super::{Balance, ConsumptionRate, HistoryRecord};
 
 const API_KEY: &str = "demo";
 const CURRENCY: &str = "CNY";
@@ -48,7 +48,9 @@ pub(super) fn prepare(conn: &Connection) -> Result<(), String> {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 CURRENCY,
-                format_time(Local::now() - ChronoDuration::minutes(*minutes_ago)),
+                (Local::now() - ChronoDuration::minutes(*minutes_ago))
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string(),
                 total,
                 topped,
                 granted,

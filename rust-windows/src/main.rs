@@ -1240,7 +1240,7 @@ mod windows_app {
                 .build(&mut export_path_label)?;
             nwg::TextInput::builder()
                 .text(&config.export_path)
-                .placeholder_text("%USERPROFILE%")
+                .placeholder_text(Some("%USERPROFILE%"))
                 .position((250, 345))
                 .size((230, 28))
                 .parent(&general_tab)
