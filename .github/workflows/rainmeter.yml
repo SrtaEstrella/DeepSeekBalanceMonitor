@@ -51,6 +51,15 @@ jobs:
           rm -rf "$package_root" target/rainmeter
           mkdir -p "$package_root/Skins" target/rainmeter
           cp -R rainmeter-widget/DeepSeekBalanceMonitor "$package_root/Skins/"
+          python - <<'PY'
+          from pathlib import Path
+
+          skin_root = Path("target/rainmeter-package/Skins/DeepSeekBalanceMonitor")
+          for path in skin_root.rglob("*"):
+              if path.suffix.lower() in {".ini", ".inc"}:
+                  text = path.read_text(encoding="utf-8-sig")
+                  path.write_bytes(text.encode("utf-16"))
+          PY
           cat > "$package_root/RMSKIN.ini" <<EOF
           [rmskin]
           Name=DeepSeek Balance Monitor
