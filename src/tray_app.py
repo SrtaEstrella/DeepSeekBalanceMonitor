@@ -184,19 +184,20 @@ def on_show_balance(icon, item):
     else:
         pb = app.get_preferred_balance()
         if pb:
-            lines.append(f"💰 {T('bal_line', lang,
-                           balance=f"{pb['total_balance']:,.2f}",
-                           code=pb['currency'],
-                           topped=f"{pb['topped_up_balance']:,.2f}",
-                           granted=f"{pb['granted_balance']:,.2f}")}")
+            bal = T('bal_line', lang,
+                    balance=f"{pb['total_balance']:,.2f}",
+                    code=pb['currency'],
+                    topped=f"{pb['topped_up_balance']:,.2f}",
+                    granted=f"{pb['granted_balance']:,.2f}")
         else:
             first_code = next(iter(balances))
             b = balances[first_code]
-            lines.append(f"💰 {T('bal_line', lang,
-                           balance=f"{b['total_balance']:,.2f}",
-                           code=first_code,
-                           topped=f"{b['topped_up_balance']:,.2f}",
-                           granted=f"{b['granted_balance']:,.2f}")}")
+            bal = T('bal_line', lang,
+                    balance=f"{b['total_balance']:,.2f}",
+                    code=first_code,
+                    topped=f"{b['topped_up_balance']:,.2f}",
+                    granted=f"{b['granted_balance']:,.2f}")
+        lines.append(f"💰 {bal}")
 
         cr = get_consumption_rate()
         if cr:
