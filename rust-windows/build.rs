@@ -68,16 +68,14 @@ fn resource_path(path: &Path) -> String {
 }
 
 fn find_resource_compiler() -> Option<&'static str> {
-    for compiler in ["rc.exe", "llvm-rc.exe", "rc", "llvm-rc"] {
-        if Command::new(compiler)
-            .arg("/?")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok()
-        {
-            return Some(compiler);
-        }
-    }
-    None
+    ["rc.exe", "llvm-rc.exe", "rc", "llvm-rc"]
+        .into_iter()
+        .find(|&compiler| {
+            Command::new(compiler)
+                .arg("/?")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok()
+        })
 }

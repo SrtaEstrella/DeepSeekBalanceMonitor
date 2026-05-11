@@ -6,8 +6,8 @@ mod windows_app {
     use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
     use imageproc::drawing::draw_text_mut;
     use native_windows_gui as nwg;
-    use reqwest::StatusCode;
-    use rusqlite::{params, Connection};
+    use reqwest::{Proxy, StatusCode};
+    use rusqlite::{params, Connection, Error as SqlError};
     use rusttype::{point, Font, Scale};
     use serde::{Deserialize, Serialize};
     use std::cell::RefCell;
@@ -20,14 +20,18 @@ mod windows_app {
     use std::process::Command;
     use std::ptr;
     use std::rc::Rc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::{self, Receiver, Sender};
     use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::Duration;
 
+    mod demo;
+
     const APP_NAME: &str = "DeepSeek Balance Monitor";
     const TOP_UP_URL: &str = "https://platform.deepseek.com/top_up";
     const STARTUP_LINK_NAME: &str = "DeepSeek Balance Monitor.lnk";
+    const API_KEY_PLACEHOLDER: &str = "Stored securely. Leave blank to keep the existing API key.";
     const CSIDL_STARTUP: i32 = 0x0007;
     const CSIDL_FLAG_CREATE: i32 = 0x8000;
     const COINIT_APARTMENTTHREADED: u32 = 0x2;
@@ -51,6 +55,7 @@ mod windows_app {
         data3: 0x0000,
         data4: [0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46],
     };
+    static DATABASE_RECREATED_WARNING: AtomicBool = AtomicBool::new(false);
 
     #[repr(C)]
     struct Guid {
@@ -58,6 +63,12 @@ mod windows_app {
         data2: u16,
         data3: u16,
         data4: [u8; 8],
+    }
+
+    #[repr(C)]
+    struct DataBlob {
+        cb_data: u32,
+        pb_data: *mut u8,
     }
 
     #[repr(C)]
@@ -167,6 +178,33 @@ mod windows_app {
         ) -> i32;
     }
 
+    #[link(name = "crypt32")]
+    extern "system" {
+        fn CryptProtectData(
+            data_in: *mut DataBlob,
+            data_descr: *const u16,
+            optional_entropy: *mut DataBlob,
+            reserved: *mut c_void,
+            prompt_struct: *mut c_void,
+            flags: u32,
+            data_out: *mut DataBlob,
+        ) -> i32;
+        fn CryptUnprotectData(
+            data_in: *mut DataBlob,
+            data_descr: *mut *mut u16,
+            optional_entropy: *mut DataBlob,
+            reserved: *mut c_void,
+            prompt_struct: *mut c_void,
+            flags: u32,
+            data_out: *mut DataBlob,
+        ) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn LocalFree(mem: *mut c_void) -> *mut c_void;
+    }
+
     #[derive(Clone, Serialize, Deserialize)]
     struct AppConfig {
         #[serde(default)]
@@ -177,6 +215,8 @@ mod windows_app {
         threshold_yuan: f64,
         #[serde(default = "default_lang")]
         language: String,
+        #[serde(default = "default_ui_lang")]
+        ui_language: String,
         #[serde(default = "default_auto_start")]
         auto_start: bool,
         #[serde(default = "default_alert_mode")]
@@ -185,6 +225,16 @@ mod windows_app {
         api_alert_enabled: bool,
         #[serde(default = "default_retention_days")]
         retention_days: u64,
+        #[serde(default)]
+        export_path: String,
+        #[serde(default)]
+        http_proxy: String,
+        #[serde(default = "default_theme")]
+        theme: String,
+        #[serde(default)]
+        icon_colors: BTreeMap<String, String>,
+        #[serde(default)]
+        icon_stroke: bool,
         #[serde(flatten)]
         extra: BTreeMap<String, serde_json::Value>,
     }
@@ -196,10 +246,16 @@ mod windows_app {
                 interval_minutes: default_interval(),
                 threshold_yuan: default_threshold(),
                 language: default_lang(),
+                ui_language: default_ui_lang(),
                 auto_start: default_auto_start(),
                 alert_mode: default_alert_mode(),
                 api_alert_enabled: default_api_alert_enabled(),
                 retention_days: default_retention_days(),
+                export_path: String::new(),
+                http_proxy: String::new(),
+                theme: default_theme(),
+                icon_colors: BTreeMap::new(),
+                icon_stroke: false,
                 extra: BTreeMap::new(),
             }
         }
@@ -218,6 +274,10 @@ mod windows_app {
     }
 
     fn default_lang() -> String {
+        "en".to_string()
+    }
+
+    fn default_ui_lang() -> String {
         "zh".to_string()
     }
 
@@ -231,6 +291,47 @@ mod windows_app {
 
     fn default_retention_days() -> u64 {
         30
+    }
+
+    fn default_theme() -> String {
+        "default".to_string()
+    }
+
+    fn custom_or_default_colors(config: &AppConfig) -> BTreeMap<String, String> {
+        let mut colors = BTreeMap::new();
+        for (key, value) in [
+            ("ok", "3c6966"),
+            ("low", "b9463c"),
+            ("degraded", "78695a"),
+            ("nodata", "69696e"),
+        ] {
+            colors.insert(
+                key.to_string(),
+                config
+                    .icon_colors
+                    .get(key)
+                    .cloned()
+                    .unwrap_or_else(|| value.to_string()),
+            );
+        }
+        colors
+    }
+
+    fn parse_icon_colors(values: [String; 4]) -> Result<BTreeMap<String, String>, String> {
+        let keys = ["ok", "low", "degraded", "nodata"];
+        let mut colors = BTreeMap::new();
+        for (key, value) in keys.into_iter().zip(values.into_iter()) {
+            let hex = value.trim().trim_start_matches('#');
+            if !is_hex_color(hex) {
+                return Err(format!("{key} color must be a 6-digit hex value."));
+            }
+            colors.insert(key.to_string(), hex.to_string());
+        }
+        Ok(colors)
+    }
+
+    fn is_hex_color(value: &str) -> bool {
+        value.len() == 6 && value.chars().all(|ch| ch.is_ascii_hexdigit())
     }
 
     #[derive(Clone, Debug)]
@@ -247,6 +348,7 @@ mod windows_app {
         total: f64,
         topped: f64,
         granted: f64,
+        service_status: String,
     }
 
     struct HistorySummary {
@@ -261,6 +363,13 @@ mod windows_app {
         max_total: f64,
         avg_total: f64,
         change_total: f64,
+    }
+
+    #[derive(Clone, Debug)]
+    struct ConsumptionRate {
+        daily_rate: f64,
+        hours_left: f64,
+        currency: String,
     }
 
     #[derive(Default)]
@@ -278,6 +387,7 @@ mod windows_app {
     struct CheckResult {
         balance: Result<BTreeMap<String, Balance>, String>,
         service_status: String,
+        demo_mode: bool,
     }
 
     enum UiMessage {
@@ -348,7 +458,11 @@ mod windows_app {
         log_line("Rust Windows app started");
         ui.sync_auto_start();
 
+        if DATABASE_RECREATED_WARNING.swap(false, Ordering::SeqCst) {
+            ui.notify_database_recreated();
+        }
         if ui.state.lock().unwrap().config.api_key.trim().is_empty() {
+            ui.show_settings();
             ui.notify_missing_api_key();
         }
 
@@ -395,7 +509,7 @@ mod windows_app {
                 ..RuntimeState::default()
             }));
             let icon_path = config_dir().join("tray.ico");
-            let _ = write_tray_icon(&icon_path, "...", false, false);
+            let _ = write_tray_icon(&icon_path, "...", false, false, &config);
 
             let mut window = Default::default();
             let mut icon = Default::default();
@@ -417,35 +531,35 @@ mod windows_app {
             nwg::TrayNotification::builder()
                 .parent(&window)
                 .icon(Some(&icon))
-                .tip(Some(tr(&config.language, "checking")))
+                .tip(Some(tr(&config.ui_language, "checking")))
                 .build(&mut tray)?;
             nwg::Menu::builder()
                 .popup(true)
                 .parent(&window)
                 .build(&mut tray_menu)?;
             nwg::MenuItem::builder()
-                .text(tr(&config.language, "view_balance"))
+                .text(tr(&config.ui_language, "view_balance"))
                 .parent(&tray_menu)
                 .build(&mut view_item)?;
             nwg::MenuItem::builder()
-                .text(tr(&config.language, "check_now"))
+                .text(tr(&config.ui_language, "check_now"))
                 .parent(&tray_menu)
                 .build(&mut check_item)?;
             nwg::MenuItem::builder()
-                .text(tr(&config.language, "top_up"))
+                .text(tr(&config.ui_language, "top_up"))
                 .parent(&tray_menu)
                 .build(&mut top_up_item)?;
             nwg::MenuItem::builder()
-                .text(tr(&config.language, "auto_start"))
+                .text(tr(&config.ui_language, "auto_start"))
                 .check(config.auto_start)
                 .parent(&tray_menu)
                 .build(&mut auto_start_item)?;
             nwg::MenuItem::builder()
-                .text(tr(&config.language, "settings"))
+                .text(tr(&config.ui_language, "settings"))
                 .parent(&tray_menu)
                 .build(&mut settings_item)?;
             nwg::MenuItem::builder()
-                .text(tr(&config.language, "quit"))
+                .text(tr(&config.ui_language, "quit"))
                 .parent(&tray_menu)
                 .build(&mut quit_item)?;
             nwg::Notice::builder().parent(&window).build(&mut notice)?;
@@ -520,24 +634,26 @@ mod windows_app {
         }
 
         fn notify_missing_api_key(&self) {
-            let (config, title, message) = {
+            let (title, message) = {
                 let state = self.state.lock().unwrap();
-                let lang = state.config.language.as_str();
+                let lang = state.config.ui_language.as_str();
                 (
-                    state.config.clone(),
                     tr(lang, "api_key_missing_title").to_string(),
                     tr(lang, "api_key_missing_body").to_string(),
                 )
             };
-            match ensure_config_file(&config) {
-                Ok(true) => {
-                    if let Err(error) = open_config_file() {
-                        log_line(&format!("Failed to open config file: {error}"));
-                    }
-                }
-                Ok(false) => {}
-                Err(error) => log_line(&format!("Failed to create config file: {error}")),
-            }
+            self.tray.show(&message, Some(&title), None, None);
+        }
+
+        fn notify_database_recreated(&self) {
+            let (title, message) = {
+                let state = self.state.lock().unwrap();
+                let lang = state.config.ui_language.as_str();
+                (
+                    tr(lang, "database_recreated_title").to_string(),
+                    tr(lang, "database_recreated_body").to_string(),
+                )
+            };
             self.tray.show(&message, Some(&title), None, None);
         }
 
@@ -584,20 +700,33 @@ mod windows_app {
             let tx = self.tx.clone();
             let notice = self.notice.sender();
             thread::spawn(move || {
-                let service_status = fetch_service_status();
+                let demo_mode = demo::is_enabled(&config.api_key);
+                let service_status = if demo_mode {
+                    "none".to_string()
+                } else {
+                    fetch_service_status(&config.http_proxy)
+                };
                 let balance = if config.api_key.trim().is_empty() {
                     Err("No API Key configured".to_string())
+                } else if demo_mode {
+                    open_history_db().and_then(|conn| {
+                        demo::prepare(&conn)?;
+                        demo::balances(&conn)
+                    })
                 } else {
-                    fetch_balance(&config.api_key)
+                    fetch_balance(&config.api_key, &config.http_proxy)
                 };
-                if let Ok(balances) = &balance {
-                    if let Err(error) = save_balance_history(balances) {
-                        log_line(&format!("Failed to save balance history: {error}"));
+                if !demo_mode {
+                    if let Ok(balances) = &balance {
+                        if let Err(error) = save_balance_history(balances, &service_status) {
+                            log_line(&format!("Failed to save balance history: {error}"));
+                        }
                     }
                 }
                 let _ = tx.send(UiMessage::CheckFinished(CheckResult {
                     balance,
                     service_status,
+                    demo_mode,
                 }));
                 notice.notice();
             });
@@ -611,11 +740,13 @@ mod windows_app {
                         let mut should_notify_api = None;
                         {
                             let mut state = self.state.lock().unwrap();
+                            let demo_mode = result.demo_mode;
                             state.checking = false;
                             let previous_service_status = state.service_status.clone();
                             let api_changed = state.service_status_checked
                                 && previous_service_status != result.service_status;
-                            if api_changed
+                            if !demo_mode
+                                && api_changed
                                 && state.config.api_alert_enabled
                                 && previous_service_status != "unknown"
                                 && result.service_status != "unknown"
@@ -629,10 +760,14 @@ mod windows_app {
                                     state.balances = balances;
                                     state.last_check = Some(Local::now());
                                     state.error = None;
-                                    let low_balance = is_low_balance(&state);
-                                    should_notify =
-                                        should_low_balance_alert(&mut state, low_balance);
-                                    log_line("Balance check succeeded");
+                                    if demo_mode {
+                                        log_line("Demo balance check succeeded");
+                                    } else {
+                                        let low_balance = is_low_balance(&state);
+                                        should_notify =
+                                            should_low_balance_alert(&mut state, low_balance);
+                                        log_line("Balance check succeeded");
+                                    }
                                 }
                                 Err(error) => {
                                     if service_degraded(&state.service_status)
@@ -662,7 +797,7 @@ mod windows_app {
         fn update_tray(&self) {
             let (tooltip, label, low_balance, service_degraded) = {
                 let state = self.state.lock().unwrap();
-                let lang = state.config.language.as_str();
+                let lang = state.config.ui_language.as_str();
                 if state.checking {
                     (
                         tr(lang, "checking").to_string(),
@@ -700,9 +835,17 @@ mod windows_app {
             };
 
             self.tray.set_tip(&tooltip);
-            if let Err(error) =
-                write_tray_icon(&self.icon_path, &label, low_balance, service_degraded)
-            {
+            let icon_result = {
+                let state = self.state.lock().unwrap();
+                write_tray_icon(
+                    &self.icon_path,
+                    &label,
+                    low_balance,
+                    service_degraded,
+                    &state.config,
+                )
+            };
+            if let Err(error) = icon_result {
                 log_line(&format!("Icon update failed: {error}"));
                 return;
             }
@@ -721,28 +864,27 @@ mod windows_app {
         fn show_balance(&self) {
             let (title, message) = {
                 let state = self.state.lock().unwrap();
-                let lang = state.config.language.as_str();
-                let mut lines = Vec::new();
-                if let Some((code, balance)) = preferred_balance(&state.balances) {
-                    lines.push(format_balance_line(lang, code, balance));
-                }
-                if let Some(error) = &state.error {
-                    lines.push(format!("{}: {}", tr(lang, "query_error"), error));
-                } else if let Some(last) = state.last_check {
-                    lines.push(format!(
-                        "{}: {}",
-                        tr(lang, "last_check"),
-                        last.format("%Y-%m-%d %H:%M:%S")
-                    ));
+                let lang = state.config.ui_language.as_str();
+                let rate = if demo::is_enabled(&state.config.api_key) {
+                    open_history_db()
+                        .and_then(|conn| {
+                            demo::prepare(&conn)?;
+                            demo::consumption_rate(&conn)
+                        })
+                        .ok()
                 } else {
-                    lines.push(tr(lang, "not_checked").to_string());
-                }
-                lines.push(format!(
-                    "{}{}",
-                    tr(lang, "service_status"),
-                    service_status_text(lang, &state.service_status)
-                ));
-                (tr(lang, "bal_title").to_string(), lines.join("\n"))
+                    consumption_rate(24).ok().flatten()
+                };
+                let message = balance_notification_message(
+                    lang,
+                    &state.balances,
+                    rate.as_ref(),
+                    state.error.as_deref(),
+                    state.last_check,
+                    &state.service_status,
+                    Local::now(),
+                );
+                (tr(lang, "bal_title").to_string(), message)
             };
             self.tray.show(&message, Some(&title), None, None);
         }
@@ -756,7 +898,7 @@ mod windows_app {
         fn notify_low_balance(&self) {
             let (enabled, title, message) = {
                 let state = self.state.lock().unwrap();
-                let lang = state.config.language.as_str();
+                let lang = state.config.ui_language.as_str();
                 if let Some((code, balance)) = preferred_balance(&state.balances) {
                     (
                         true,
@@ -783,7 +925,7 @@ mod windows_app {
         fn notify_api_status_change(&self, degraded: bool) {
             let (title, message) = {
                 let state = self.state.lock().unwrap();
-                let lang = state.config.language.as_str();
+                let lang = state.config.ui_language.as_str();
                 if degraded {
                     (
                         tr(lang, "api_degraded_title").to_string(),
@@ -879,6 +1021,18 @@ mod windows_app {
         api_alerts: nwg::CheckBox,
         _retention_label: nwg::Label,
         retention_input: nwg::TextInput,
+        _export_path_label: nwg::Label,
+        export_path_input: nwg::TextInput,
+        _proxy_label: nwg::Label,
+        proxy_input: nwg::TextInput,
+        _theme_label: nwg::Label,
+        theme_combo: nwg::ComboBox<&'static str>,
+        icon_stroke: nwg::CheckBox,
+        _custom_color_label: nwg::Label,
+        ok_color_input: nwg::TextInput,
+        low_color_input: nwg::TextInput,
+        degraded_color_input: nwg::TextInput,
+        nodata_color_input: nwg::TextInput,
         auto_start: nwg::CheckBox,
         _status_label: nwg::Label,
         _history_days_label: nwg::Label,
@@ -896,7 +1050,7 @@ mod windows_app {
     impl SettingsWindow {
         fn build(app: Rc<AppUi>) -> Result<Rc<Self>, nwg::NwgError> {
             let config = app.state.lock().unwrap().config.clone();
-            let lang = config.language.as_str();
+            let lang = config.ui_language.as_str();
             let checked = nwg::CheckBoxState::Checked;
             let unchecked = nwg::CheckBoxState::Unchecked;
 
@@ -918,6 +1072,18 @@ mod windows_app {
             let mut api_alerts = Default::default();
             let mut retention_label = Default::default();
             let mut retention_input = Default::default();
+            let mut export_path_label = Default::default();
+            let mut export_path_input = Default::default();
+            let mut proxy_label = Default::default();
+            let mut proxy_input = Default::default();
+            let mut theme_label = Default::default();
+            let mut theme_combo = Default::default();
+            let mut icon_stroke = Default::default();
+            let mut custom_color_label = Default::default();
+            let mut ok_color_input = Default::default();
+            let mut low_color_input = Default::default();
+            let mut degraded_color_input = Default::default();
+            let mut nodata_color_input = Default::default();
             let mut auto_start = Default::default();
             let mut status_label = Default::default();
             let mut history_days_label = Default::default();
@@ -932,13 +1098,13 @@ mod windows_app {
 
             nwg::Window::builder()
                 .flags(nwg::WindowFlags::WINDOW | nwg::WindowFlags::VISIBLE)
-                .size((520, 510))
+                .size((520, 720))
                 .center(true)
                 .title(tr(lang, "settings_title"))
                 .build(&mut window)?;
             nwg::TabsContainer::builder()
                 .position((10, 10))
-                .size((500, 425))
+                .size((500, 635))
                 .parent(&window)
                 .build(&mut tabs)?;
             nwg::Tab::builder()
@@ -957,6 +1123,9 @@ mod windows_app {
                 .build(&mut api_label)?;
             nwg::TextInput::builder()
                 .text(&config.api_key)
+                .placeholder_text(
+                    (!config.api_key.trim().is_empty()).then_some(API_KEY_PLACEHOLDER),
+                )
                 .position((20, 48))
                 .size((460, 28))
                 .parent(&general_tab)
@@ -1002,14 +1171,14 @@ mod windows_app {
                 .build(&mut language_label)?;
             nwg::ComboBox::builder()
                 .collection(vec!["中文", "English"])
-                .selected_index(Some(if config.language == "en" { 1 } else { 0 }))
+                .selected_index(Some(if config.ui_language == "en" { 1 } else { 0 }))
                 .position((250, 192))
                 .size((140, 100))
                 .parent(&general_tab)
                 .build(&mut language_combo)?;
             nwg::CheckBox::builder()
                 .text(tr(lang, "auto_start"))
-                .position((20, 348))
+                .position((20, 548))
                 .size((220, 24))
                 .parent(&general_tab)
                 .check_state(if config.auto_start {
@@ -1051,6 +1220,105 @@ mod windows_app {
                 .size((100, 28))
                 .parent(&general_tab)
                 .build(&mut retention_input)?;
+            nwg::Label::builder()
+                .text(tr(lang, "proxy_label"))
+                .position((20, 387))
+                .size((220, 22))
+                .parent(&general_tab)
+                .build(&mut proxy_label)?;
+            nwg::TextInput::builder()
+                .text(&config.http_proxy)
+                .position((250, 383))
+                .size((230, 28))
+                .parent(&general_tab)
+                .build(&mut proxy_input)?;
+            nwg::Label::builder()
+                .text(tr(lang, "export_path_label"))
+                .position((20, 349))
+                .size((220, 22))
+                .parent(&general_tab)
+                .build(&mut export_path_label)?;
+            nwg::TextInput::builder()
+                .text(&config.export_path)
+                .placeholder_text("%USERPROFILE%")
+                .position((250, 345))
+                .size((230, 28))
+                .parent(&general_tab)
+                .build(&mut export_path_input)?;
+            nwg::Label::builder()
+                .text(tr(lang, "theme_label"))
+                .position((20, 425))
+                .size((220, 22))
+                .parent(&general_tab)
+                .build(&mut theme_label)?;
+            nwg::ComboBox::builder()
+                .collection(vec![
+                    tr(lang, "theme_default"),
+                    tr(lang, "theme_contrast"),
+                    tr(lang, "theme_bright"),
+                    tr(lang, "theme_dark_mode"),
+                    tr(lang, "theme_mono"),
+                    tr(lang, "theme_custom"),
+                ])
+                .selected_index(Some(match config.theme.as_str() {
+                    "contrast" => 1,
+                    "bright" => 2,
+                    "dark_mode" => 3,
+                    "mono" => 4,
+                    "custom" => 5,
+                    _ => 0,
+                }))
+                .position((250, 421))
+                .size((140, 100))
+                .parent(&general_tab)
+                .build(&mut theme_combo)?;
+            nwg::CheckBox::builder()
+                .text(tr(lang, "icon_stroke_label"))
+                .position((20, 454))
+                .size((220, 24))
+                .parent(&general_tab)
+                .check_state(if config.icon_stroke {
+                    checked
+                } else {
+                    unchecked
+                })
+                .build(&mut icon_stroke)?;
+            nwg::Label::builder()
+                .text(tr(lang, "custom_colors_label"))
+                .position((20, 486))
+                .size((220, 22))
+                .parent(&general_tab)
+                .build(&mut custom_color_label)?;
+            let colors = custom_or_default_colors(&config);
+            nwg::TextInput::builder()
+                .text(colors.get("ok").map(String::as_str).unwrap_or("3c6966"))
+                .position((20, 514))
+                .size((100, 28))
+                .parent(&general_tab)
+                .build(&mut ok_color_input)?;
+            nwg::TextInput::builder()
+                .text(colors.get("low").map(String::as_str).unwrap_or("b9463c"))
+                .position((135, 514))
+                .size((100, 28))
+                .parent(&general_tab)
+                .build(&mut low_color_input)?;
+            nwg::TextInput::builder()
+                .text(
+                    colors
+                        .get("degraded")
+                        .map(String::as_str)
+                        .unwrap_or("78695a"),
+                )
+                .position((250, 514))
+                .size((100, 28))
+                .parent(&general_tab)
+                .build(&mut degraded_color_input)?;
+            nwg::TextInput::builder()
+                .text(colors.get("nodata").map(String::as_str).unwrap_or("69696e"))
+                .position((365, 514))
+                .size((100, 28))
+                .parent(&general_tab)
+                .build(&mut nodata_color_input)?;
             nwg::CheckBox::builder()
                 .text(tr(lang, "api_alert_label"))
                 .position((20, 273))
@@ -1066,7 +1334,7 @@ mod windows_app {
             let status = app.status_line();
             nwg::Label::builder()
                 .text(&status)
-                .position((20, 388))
+                .position((20, 586))
                 .size((460, 38))
                 .parent(&general_tab)
                 .build(&mut status_label)?;
@@ -1124,13 +1392,13 @@ mod windows_app {
                 .build(&mut history_box)?;
             nwg::Button::builder()
                 .text(tr(lang, "save"))
-                .position((300, 450))
+                .position((300, 660))
                 .size((86, 30))
                 .parent(&window)
                 .build(&mut save_button)?;
             nwg::Button::builder()
                 .text(tr(lang, "cancel"))
-                .position((395, 450))
+                .position((395, 660))
                 .size((86, 30))
                 .parent(&window)
                 .build(&mut cancel_button)?;
@@ -1155,6 +1423,18 @@ mod windows_app {
                 api_alerts,
                 _retention_label: retention_label,
                 retention_input,
+                _export_path_label: export_path_label,
+                export_path_input,
+                _proxy_label: proxy_label,
+                proxy_input,
+                _theme_label: theme_label,
+                theme_combo,
+                icon_stroke,
+                _custom_color_label: custom_color_label,
+                ok_color_input,
+                low_color_input,
+                degraded_color_input,
+                nodata_color_input,
                 auto_start,
                 _status_label: status_label,
                 _history_days_label: history_days_label,
@@ -1233,7 +1513,8 @@ mod windows_app {
         fn export_history(&self) {
             let (days, currency) = self.history_filters();
             let lang = self.current_language();
-            match export_balance_history(days, currency.as_deref()) {
+            let export_path = self.export_path_input.text();
+            match export_balance_history(days, currency.as_deref(), export_path.trim()) {
                 Ok(path) => self.history_box.set_text(&format!(
                     "{} {}",
                     tr(&lang, "export_success"),
@@ -1276,7 +1557,12 @@ mod windows_app {
             let lang = self.current_language();
             let api_key = self.api_input.text().trim().to_string();
             if api_key.is_empty() {
-                return Err(tr(&lang, "api_key_empty").to_string());
+                if config.api_key.trim().is_empty() {
+                    return Err(tr(&lang, "api_key_empty").to_string());
+                }
+            } else {
+                store_secure_api_key(&api_key)?;
+                config.api_key = api_key;
             }
             let interval_minutes = self
                 .interval_input
@@ -1305,10 +1591,9 @@ mod windows_app {
             if !(1..=3650).contains(&retention_days) {
                 return Err(tr(&lang, "retention_range").to_string());
             }
-            config.api_key = api_key;
             config.interval_minutes = interval_minutes;
             config.threshold_yuan = threshold_yuan;
-            config.language = if self.language_combo.selection() == Some(1) {
+            config.ui_language = if self.language_combo.selection() == Some(1) {
                 "en".to_string()
             } else {
                 "zh".to_string()
@@ -1322,6 +1607,29 @@ mod windows_app {
             }
             .to_string();
             config.retention_days = retention_days;
+            config.export_path = self.export_path_input.text().trim().to_string();
+            config.http_proxy = self.proxy_input.text().trim().to_string();
+            config.theme = match self.theme_combo.selection() {
+                Some(1) => "contrast",
+                Some(2) => "bright",
+                Some(3) => "dark_mode",
+                Some(4) => "mono",
+                Some(5) => "custom",
+                _ => "default",
+            }
+            .to_string();
+            config.icon_colors = if config.theme == "custom" {
+                parse_icon_colors([
+                    self.ok_color_input.text(),
+                    self.low_color_input.text(),
+                    self.degraded_color_input.text(),
+                    self.nodata_color_input.text(),
+                ])
+                .map_err(|_| tr(&lang, "color_hex_error").to_string())?
+            } else {
+                BTreeMap::new()
+            };
+            config.icon_stroke = self.icon_stroke.check_state() == nwg::CheckBoxState::Checked;
             normalize_config(&mut config);
             Ok(config)
         }
@@ -1338,7 +1646,7 @@ mod windows_app {
     impl AppUi {
         fn status_line(&self) -> String {
             let state = self.state.lock().unwrap();
-            let lang = state.config.language.as_str();
+            let lang = state.config.ui_language.as_str();
             let last = state
                 .last_check
                 .map(|v| v.format("%Y-%m-%d %H:%M:%S").to_string())
@@ -1358,11 +1666,8 @@ mod windows_app {
         }
     }
 
-    fn fetch_balance(api_key: &str) -> Result<BTreeMap<String, Balance>, String> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .build()
-            .map_err(|e| e.to_string())?;
+    fn fetch_balance(api_key: &str, http_proxy: &str) -> Result<BTreeMap<String, Balance>, String> {
+        let client = http_client(Duration::from_secs(15), http_proxy)?;
         let key = api_key.chars().filter(|c| c.is_ascii()).collect::<String>();
         let response = client
             .get("https://api.deepseek.com/user/balance")
@@ -1395,11 +1700,8 @@ mod windows_app {
         Ok(balances)
     }
 
-    fn fetch_service_status() -> String {
-        let client = match reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-        {
+    fn fetch_service_status(http_proxy: &str) -> String {
+        let client = match http_client(Duration::from_secs(10), http_proxy) {
             Ok(client) => client,
             Err(error) => {
                 log_line(&format!("API status client failed: {error}"));
@@ -1423,6 +1725,18 @@ mod windows_app {
             Err(error) => log_line(&format!("API status component check failed: {error}")),
         }
         status.to_string()
+    }
+
+    fn http_client(
+        timeout: Duration,
+        http_proxy: &str,
+    ) -> Result<reqwest::blocking::Client, String> {
+        let mut builder = reqwest::blocking::Client::builder().timeout(timeout);
+        let proxy = http_proxy.trim();
+        if !proxy.is_empty() {
+            builder = builder.proxy(Proxy::all(proxy).map_err(|e| e.to_string())?);
+        }
+        builder.build().map_err(|e| e.to_string())
     }
 
     fn fetch_overall_status(client: &reqwest::blocking::Client) -> Result<&'static str, String> {
@@ -1516,6 +1830,17 @@ mod windows_app {
         }
     }
 
+    fn service_status_notification_label(lang: &str, status: &str) -> String {
+        let emoji = match status {
+            "none" => "🟢",
+            "minor" | "maintenance" => "🟡",
+            "major" => "🟠",
+            "critical" => "🔴",
+            _ => "⚪",
+        };
+        format!("{} {}", emoji, service_status_text(lang, status))
+    }
+
     fn is_low_balance(state: &RuntimeState) -> bool {
         preferred_balance(&state.balances)
             .map(|(_, balance)| balance.total_balance < state.config.threshold_yuan)
@@ -1558,6 +1883,68 @@ mod windows_app {
         }
     }
 
+    fn balance_notification_message(
+        lang: &str,
+        balances: &BTreeMap<String, Balance>,
+        rate: Option<&ConsumptionRate>,
+        error: Option<&str>,
+        last_check: Option<DateTime<Local>>,
+        service_status: &str,
+        now: DateTime<Local>,
+    ) -> String {
+        let mut lines = Vec::new();
+        if let Some((code, balance)) = preferred_balance(balances) {
+            lines.push(format!("💰 {}", format_balance_line(lang, code, balance)));
+            if let Some(rate) = rate {
+                lines.push(format!("📊 {}", consumption_rate_line(lang, rate)));
+            }
+        }
+        let separator = if lang == "en" { ": " } else { "：" };
+        lines.push(format!(
+            "📡 {}{}",
+            tr(lang, "service_status"),
+            service_status_notification_label(lang, service_status)
+        ));
+        if let Some(error) = error {
+            lines.push(format!(
+                "🕐 {}{}{}",
+                tr(lang, "query_error"),
+                separator,
+                error
+            ));
+        } else if let Some(last) = last_check {
+            lines.push(format!(
+                "🕐 {}{}{}",
+                tr(lang, "last_check"),
+                separator,
+                relative_time(lang, last, now)
+            ));
+        } else {
+            lines.push(format!("🕐 {}", tr(lang, "not_checked")));
+        }
+        lines.join("\n")
+    }
+
+    fn relative_time(lang: &str, value: DateTime<Local>, now: DateTime<Local>) -> String {
+        let seconds = (now - value).num_seconds().max(0);
+        let zh = lang != "en";
+        if seconds < 60 {
+            return if zh { "刚刚" } else { "just now" }.to_string();
+        }
+        let (value, zh_unit, en_unit) = if seconds < 3600 {
+            (seconds / 60, "分钟", "minutes")
+        } else if seconds < 86400 {
+            (seconds / 3600, "小时", "hours")
+        } else {
+            (seconds / 86400, "天", "days")
+        };
+        if zh {
+            format!("{value} {zh_unit}前")
+        } else {
+            format!("{value} {en_unit} ago")
+        }
+    }
+
     fn icon_label(value: f64) -> String {
         let int_value = value.max(0.0) as u64;
         if int_value <= 99 {
@@ -1572,17 +1959,22 @@ mod windows_app {
         label: &str,
         low_balance: bool,
         service_degraded: bool,
+        config: &AppConfig,
     ) -> Result<(), String> {
         ensure_dir(&config_dir()).map_err(|e| e.to_string())?;
         let fill = match label {
-            "!" => Rgba([185, 70, 60, 255]),
-            "..." => Rgba([105, 105, 110, 255]),
-            _ if low_balance => Rgba([185, 70, 60, 255]),
-            _ if service_degraded => Rgba([138, 128, 120, 255]),
-            _ => Rgba([60, 105, 102, 255]),
+            "!" => theme_color(config, "low"),
+            "..." => theme_color(config, "nodata"),
+            _ if low_balance => theme_color(config, "low"),
+            _ if service_degraded => theme_color(config, "degraded"),
+            _ => theme_color(config, "ok"),
         };
+        let text_fill = text_color(fill);
         let mut image = RgbaImage::from_pixel(64, 64, Rgba([0, 0, 0, 0]));
         draw_rounded_square(&mut image, fill);
+        if config.icon_stroke {
+            draw_rounded_border(&mut image, text_fill);
+        }
         if let Some(font) = load_font() {
             let font_size = if label.len() <= 1 {
                 48.0
@@ -1593,15 +1985,7 @@ mod windows_app {
             };
             let scale = Scale::uniform(font_size);
             let (x, y) = centered_text_position(&font, scale, label, 64, 64);
-            draw_text_mut(
-                &mut image,
-                Rgba([255, 255, 255, 255]),
-                x,
-                y,
-                scale,
-                &font,
-                label,
-            );
+            draw_text_mut(&mut image, text_fill, x, y, scale, &font, label);
         }
         DynamicImage::ImageRgba8(image)
             .save_with_format(path, ImageFormat::Ico)
@@ -1617,6 +2001,80 @@ mod windows_app {
                     image.put_pixel(x as u32, y as u32, fill);
                 }
             }
+        }
+    }
+
+    fn draw_rounded_border(image: &mut RgbaImage, color: Rgba<u8>) {
+        let size = 64i32;
+        let radius = 12i32;
+        let inner = 5i32;
+        for y in 0..size {
+            for x in 0..size {
+                if inside_rounded_rect(x, y, size, radius)
+                    && !inside_rounded_rect(x - inner, y - inner, size - inner * 2, radius - inner)
+                {
+                    image.put_pixel(x as u32, y as u32, color);
+                }
+            }
+        }
+    }
+
+    fn theme_color(config: &AppConfig, key: &str) -> Rgba<u8> {
+        if config.theme == "custom" {
+            if let Some(color) = config
+                .icon_colors
+                .get(key)
+                .and_then(|value| rgba_from_hex(value))
+            {
+                return color;
+            }
+        }
+        match (config.theme.as_str(), key) {
+            ("contrast", "ok") => Rgba([45, 128, 116, 255]),
+            ("contrast", "low") => Rgba([212, 52, 46, 255]),
+            ("contrast", "degraded") => Rgba([139, 105, 20, 255]),
+            ("contrast", "nodata") => Rgba([85, 85, 85, 255]),
+            ("bright", "ok") => Rgba([200, 235, 230, 255]),
+            ("bright", "low") => Rgba([245, 210, 205, 255]),
+            ("bright", "degraded") => Rgba([235, 220, 205, 255]),
+            ("bright", "nodata") => Rgba([215, 215, 220, 255]),
+            ("dark_mode", "ok") => Rgba([80, 155, 148, 255]),
+            ("dark_mode", "low") => Rgba([215, 100, 90, 255]),
+            ("dark_mode", "degraded") => Rgba([155, 140, 115, 255]),
+            ("dark_mode", "nodata") => Rgba([125, 125, 130, 255]),
+            ("mono", "ok") => Rgba([85, 85, 85, 255]),
+            ("mono", "low") => Rgba([34, 34, 34, 255]),
+            ("mono", "degraded") => Rgba([119, 119, 119, 255]),
+            ("mono", "nodata") => Rgba([153, 153, 153, 255]),
+            (_, "low") => Rgba([185, 70, 60, 255]),
+            (_, "degraded") => Rgba([120, 105, 90, 255]),
+            (_, "nodata") => Rgba([105, 105, 110, 255]),
+            _ => Rgba([60, 105, 102, 255]),
+        }
+    }
+
+    fn rgba_from_hex(value: &str) -> Option<Rgba<u8>> {
+        let value = value.trim().trim_start_matches('#');
+        if value.len() != 6 {
+            return None;
+        }
+        u32::from_str_radix(value, 16).ok().map(|rgb| {
+            Rgba([
+                ((rgb >> 16) & 0xff) as u8,
+                ((rgb >> 8) & 0xff) as u8,
+                (rgb & 0xff) as u8,
+                255,
+            ])
+        })
+    }
+
+    fn text_color(fill: Rgba<u8>) -> Rgba<u8> {
+        let [r, g, b, _] = fill.0;
+        let lum = 0.299 * f64::from(r) + 0.587 * f64::from(g) + 0.114 * f64::from(b);
+        if lum > 170.0 {
+            Rgba([0, 0, 0, 255])
+        } else {
+            Rgba([255, 255, 255, 255])
         }
     }
 
@@ -1683,13 +2141,14 @@ mod windows_app {
     fn config_dir() -> PathBuf {
         std::env::var_os("APPDATA")
             .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                let home = std::env::var_os("USERPROFILE")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("."));
-                home.join("AppData").join("Roaming")
-            })
+            .unwrap_or_else(|| user_home_dir().join("AppData").join("Roaming"))
             .join(APP_NAME)
+    }
+
+    fn user_home_dir() -> PathBuf {
+        std::env::var_os("USERPROFILE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
     }
 
     fn config_file() -> PathBuf {
@@ -1704,13 +2163,24 @@ mod windows_app {
         config_dir().join("balance_history.db")
     }
 
-    fn history_export_file() -> PathBuf {
-        let documents = std::env::var_os("USERPROFILE")
-            .map(PathBuf::from)
-            .map(|path| path.join("Documents"))
-            .filter(|path| path.exists())
-            .unwrap_or_else(config_dir);
-        documents.join("deepseek-balance-history.csv")
+    fn db_marker_file() -> PathBuf {
+        config_dir().join(".balance_history.db.initialized")
+    }
+
+    fn history_export_file(export_path: &str) -> PathBuf {
+        let dir = if export_path.trim().is_empty() {
+            user_home_dir()
+        } else {
+            PathBuf::from(export_path.trim())
+        };
+        dir.join(history_export_filename())
+    }
+
+    fn history_export_filename() -> String {
+        format!(
+            "deepseek-balance-history-{}.csv",
+            Local::now().format("%Y%m%d")
+        )
     }
 
     fn ensure_dir(path: &Path) -> std::io::Result<()> {
@@ -1719,11 +2189,42 @@ mod windows_app {
 
     fn load_config() -> AppConfig {
         let path = config_file();
-        let mut config = fs::read_to_string(path)
-            .ok()
-            .and_then(|text| serde_json::from_str::<AppConfig>(&text).ok())
+        let text = fs::read_to_string(path).ok();
+        let missing_ui_language = text
+            .as_ref()
+            .map(|value| !value.contains("\"ui_language\""))
+            .unwrap_or(false);
+        let mut config = text
+            .as_deref()
+            .and_then(|value| serde_json::from_str::<AppConfig>(value).ok())
             .unwrap_or_default();
+        let legacy_api_key = config.api_key.trim().to_string();
+        let had_legacy_api_key = !legacy_api_key.is_empty();
+        if missing_ui_language && matches!(config.language.as_str(), "zh" | "en") {
+            config.ui_language = config.language.clone();
+        }
         normalize_config(&mut config);
+        let mut should_save_config = missing_ui_language;
+        config.api_key = if had_legacy_api_key {
+            if store_secure_api_key(&legacy_api_key).is_ok() {
+                should_save_config = true;
+            } else {
+                log_line("Failed to migrate legacy API key into secure_settings");
+            }
+            legacy_api_key
+        } else {
+            match read_secure_api_key() {
+                Ok(Some(key)) => key,
+                Ok(None) => String::new(),
+                Err(error) => {
+                    log_line(&format!("Failed to read encrypted API key: {error}"));
+                    String::new()
+                }
+            }
+        };
+        if should_save_config {
+            let _ = save_config(&config);
+        }
         config
     }
 
@@ -1747,18 +2248,30 @@ mod windows_app {
         config.interval_minutes = config.interval_minutes.clamp(1, 1440);
         config.threshold_yuan = config.threshold_yuan.clamp(0.0, 10000.0);
         config.retention_days = config.retention_days.clamp(1, 3650);
-        if config.language != "zh" && config.language != "en" {
+        if config.language != default_lang() {
             config.language = default_lang();
+        }
+        if !matches!(config.ui_language.as_str(), "zh" | "en") {
+            config.ui_language = default_ui_lang();
         }
         if !matches!(config.alert_mode.as_str(), "never" | "always" | "once") {
             config.alert_mode = default_alert_mode();
+        }
+        config.export_path = config.export_path.trim().to_string();
+        if !matches!(
+            config.theme.as_str(),
+            "default" | "contrast" | "bright" | "dark_mode" | "mono" | "custom"
+        ) {
+            config.theme = default_theme();
         }
     }
 
     fn save_config(config: &AppConfig) -> std::io::Result<()> {
         ensure_dir(&config_dir())?;
+        let mut safe = config.clone();
+        safe.api_key.clear();
         let file = File::create(config_file())?;
-        serde_json::to_writer_pretty(file, config)?;
+        serde_json::to_writer_pretty(file, &safe)?;
         Ok(())
     }
 
@@ -1771,8 +2284,101 @@ mod windows_app {
         Ok(true)
     }
 
-    fn open_config_file() -> Result<(), String> {
-        open_url(path_text(&config_file()).as_str())
+    fn read_secure_api_key() -> Result<Option<String>, String> {
+        let conn = open_history_db()?;
+        let encrypted = match conn.query_row(
+            "SELECT value FROM secure_settings WHERE key = ?1",
+            params!["api_key"],
+            |row| row.get::<_, Vec<u8>>(0),
+        ) {
+            Ok(value) => value,
+            Err(SqlError::QueryReturnedNoRows) => return Ok(None),
+            Err(error) => return Err(error.to_string()),
+        };
+        let value = decrypt_secret(&encrypted)?;
+        Ok((!value.trim().is_empty()).then_some(value))
+    }
+
+    fn store_secure_api_key(api_key: &str) -> Result<(), String> {
+        let encrypted = encrypt_secret(api_key.trim())?;
+        let conn = open_history_db()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO secure_settings (key, value, updated_at) VALUES (?1, ?2, ?3)",
+            params![
+                "api_key",
+                encrypted,
+                Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn encrypt_secret(plaintext: &str) -> Result<Vec<u8>, String> {
+        let mut input = plaintext.as_bytes().to_vec();
+        let mut input_blob = DataBlob {
+            cb_data: input.len() as u32,
+            pb_data: input.as_mut_ptr(),
+        };
+        let mut output_blob = DataBlob {
+            cb_data: 0,
+            pb_data: ptr::null_mut(),
+        };
+        let ok = unsafe {
+            CryptProtectData(
+                &mut input_blob,
+                ptr::null(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                0,
+                &mut output_blob,
+            )
+        };
+        if ok == 0 {
+            return Err("Failed to encrypt API key with Windows DPAPI".to_string());
+        }
+        copy_blob_and_free(output_blob)
+    }
+
+    fn decrypt_secret(encrypted: &[u8]) -> Result<String, String> {
+        let mut input = encrypted.to_vec();
+        let mut input_blob = DataBlob {
+            cb_data: input.len() as u32,
+            pb_data: input.as_mut_ptr(),
+        };
+        let mut output_blob = DataBlob {
+            cb_data: 0,
+            pb_data: ptr::null_mut(),
+        };
+        let ok = unsafe {
+            CryptUnprotectData(
+                &mut input_blob,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                0,
+                &mut output_blob,
+            )
+        };
+        if ok == 0 {
+            return Err("Failed to decrypt API key with Windows DPAPI".to_string());
+        }
+        let bytes = copy_blob_and_free(output_blob)?;
+        String::from_utf8(bytes).map_err(|e| e.to_string())
+    }
+
+    fn copy_blob_and_free(blob: DataBlob) -> Result<Vec<u8>, String> {
+        if blob.pb_data.is_null() {
+            return Err("Windows DPAPI returned empty data".to_string());
+        }
+        let bytes =
+            unsafe { std::slice::from_raw_parts(blob.pb_data, blob.cb_data as usize).to_vec() };
+        unsafe {
+            LocalFree(blob.pb_data.cast());
+        }
+        Ok(bytes)
     }
 
     fn open_url(target: &str) -> Result<(), String> {
@@ -1802,19 +2408,23 @@ mod windows_app {
         }
     }
 
-    fn save_balance_history(balances: &BTreeMap<String, Balance>) -> Result<(), String> {
+    fn save_balance_history(
+        balances: &BTreeMap<String, Balance>,
+        service_status: &str,
+    ) -> Result<(), String> {
         let mut conn = open_history_db()?;
         let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         for (currency, balance) in balances {
             tx.execute(
-                "INSERT INTO balance_history (timestamp, currency, total, topped, granted) VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO balance_history (timestamp, currency, total, topped, granted, service_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     &timestamp,
                     currency.as_str(),
                     balance.total_balance,
                     balance.topped_up_balance,
-                    balance.granted_balance
+                    balance.granted_balance,
+                    service_status
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -1840,7 +2450,7 @@ mod windows_app {
         let rows = if let Some(currency) = currency {
             stmt = conn
                 .prepare(
-                    "SELECT timestamp, currency, total, topped, granted FROM balance_history \
+                    "SELECT timestamp, currency, total, topped, granted, service_status FROM balance_history \
                      WHERE timestamp >= ?1 AND currency = ?2 ORDER BY timestamp ASC LIMIT ?3",
                 )
                 .map_err(|e| e.to_string())?;
@@ -1849,7 +2459,7 @@ mod windows_app {
         } else {
             stmt = conn
                 .prepare(
-                    "SELECT timestamp, currency, total, topped, granted FROM balance_history \
+                    "SELECT timestamp, currency, total, topped, granted, service_status FROM balance_history \
                      WHERE timestamp >= ?1 ORDER BY timestamp ASC LIMIT ?2",
                 )
                 .map_err(|e| e.to_string())?;
@@ -1870,6 +2480,7 @@ mod windows_app {
             total: row.get(2)?,
             topped: row.get(3)?,
             granted: row.get(4)?,
+            service_status: row.get(5)?,
         })
     }
 
@@ -1911,6 +2522,11 @@ mod windows_app {
                 tr(lang, "granted"),
                 format_amount(item.latest_granted)
             ));
+        }
+        if let Ok(Some(rate)) = consumption_rate(24) {
+            lines.push(consumption_rate_line(lang, &rate));
+        } else {
+            lines.push(tr(lang, "not_enough_data").to_string());
         }
         lines.push(String::new());
         lines.push(tr(lang, "history_chart").to_string());
@@ -1956,6 +2572,130 @@ mod windows_app {
                 })
             })
             .collect()
+    }
+
+    fn consumption_rate(hours: i64) -> Result<Option<ConsumptionRate>, String> {
+        let conn = open_history_db()?;
+        let currency = match conn.query_row(
+            "SELECT currency FROM balance_history
+             GROUP BY currency
+             ORDER BY MAX(timestamp) DESC, MAX(total) DESC
+             LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(value) => value,
+            Err(SqlError::QueryReturnedNoRows) => return Ok(None),
+            Err(error) => return Err(error.to_string()),
+        };
+        let cutoff = (Local::now() - ChronoDuration::hours(hours.max(1)))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let mut stmt = conn
+            .prepare(
+                "SELECT timestamp, currency, total, topped, granted, service_status
+                 FROM balance_history
+                 WHERE timestamp >= ?1 AND currency = ?2
+                 ORDER BY timestamp ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![cutoff, currency], history_record_from_row)
+            .map_err(|e| e.to_string())?;
+        let mut records = Vec::new();
+        for row in rows {
+            records.push(row.map_err(|e| e.to_string())?);
+        }
+        consumption_rate_from_records(&records)
+    }
+
+    fn consumption_rate_from_records(
+        records: &[HistoryRecord],
+    ) -> Result<Option<ConsumptionRate>, String> {
+        if records.len() < 2 {
+            return Ok(None);
+        }
+        let mut intervals = Vec::new();
+        let mut start_total = records[0].total;
+        let mut start_time = records[0].timestamp.as_str();
+        let mut previous_total = start_total;
+        for index in 1..records.len() {
+            let current_total = records[index].total;
+            if current_total > previous_total {
+                intervals.push((
+                    start_total,
+                    start_time,
+                    previous_total,
+                    records[index - 1].timestamp.as_str(),
+                ));
+                start_total = current_total;
+                start_time = records[index].timestamp.as_str();
+            }
+            previous_total = current_total;
+        }
+        intervals.push((
+            start_total,
+            start_time,
+            previous_total,
+            records
+                .last()
+                .map(|record| record.timestamp.as_str())
+                .unwrap_or(start_time),
+        ));
+
+        let mut total_consumed = 0.0;
+        let mut total_hours = 0.0;
+        for (start_value, start_ts, end_value, end_ts) in intervals {
+            if end_value >= start_value {
+                continue;
+            }
+            let start = NaiveDateTime::parse_from_str(start_ts, "%Y-%m-%d %H:%M:%S")
+                .map_err(|e| e.to_string())?;
+            let end = NaiveDateTime::parse_from_str(end_ts, "%Y-%m-%d %H:%M:%S")
+                .map_err(|e| e.to_string())?;
+            let hours = (end - start).num_seconds() as f64 / 3600.0;
+            if hours < 0.1 {
+                continue;
+            }
+            total_consumed += start_value - end_value;
+            total_hours += hours;
+        }
+        if total_hours < 0.1 || total_consumed <= 0.0 {
+            return Ok(None);
+        }
+        let daily_rate = (total_consumed / total_hours) * 24.0;
+        let latest = records.last().expect("records length already checked");
+        Ok(Some(ConsumptionRate {
+            daily_rate,
+            hours_left: latest.total / daily_rate * 24.0,
+            currency: latest.currency.clone(),
+        }))
+    }
+
+    fn consumption_rate_line(lang: &str, rate: &ConsumptionRate) -> String {
+        let days = (rate.hours_left / 24.0).floor() as i64;
+        let hours = (rate.hours_left % 24.0).floor() as i64;
+        if lang == "en" {
+            format!(
+                "{}: {:.2} {}/day | {} {}d {}h remaining",
+                tr(lang, "daily_rate"),
+                rate.daily_rate,
+                rate.currency,
+                tr(lang, "estimated_remaining"),
+                days,
+                hours
+            )
+        } else {
+            format!(
+                "{} {:.2} {} | {} {} 天 {} 小时",
+                tr(lang, "daily_rate"),
+                rate.daily_rate,
+                rate.currency,
+                tr(lang, "estimated_remaining"),
+                days,
+                hours
+            )
+        }
     }
 
     fn history_chart(lang: &str, records: &[HistoryRecord]) -> Vec<String> {
@@ -2016,9 +2756,13 @@ mod windows_app {
         }
     }
 
-    fn export_balance_history(days: u64, currency: Option<&str>) -> Result<PathBuf, String> {
+    fn export_balance_history(
+        days: u64,
+        currency: Option<&str>,
+        export_path: &str,
+    ) -> Result<PathBuf, String> {
         let records = history_records(days, currency, usize::MAX)?;
-        let path = history_export_file();
+        let path = history_export_file(export_path);
         if let Some(parent) = path.parent() {
             ensure_dir(parent).map_err(|e| e.to_string())?;
         }
@@ -2027,15 +2771,16 @@ mod windows_app {
     }
 
     fn history_csv(records: &[HistoryRecord]) -> String {
-        let mut lines = vec!["timestamp,currency,total,topped,granted".to_string()];
+        let mut lines = vec!["timestamp,currency,total,topped,granted,service_status".to_string()];
         for record in records {
             lines.push(format!(
-                "{},{},{},{},{}",
+                "{},{},{},{},{},{}",
                 csv_escape(&record.timestamp),
                 csv_escape(&record.currency),
                 format_amount(record.total),
                 format_amount(record.topped),
-                format_amount(record.granted)
+                format_amount(record.granted),
+                csv_escape(&record.service_status)
             ));
         }
         lines.join("\n") + "\n"
@@ -2064,7 +2809,9 @@ mod windows_app {
 
     fn open_history_db() -> Result<Connection, String> {
         ensure_dir(&config_dir()).map_err(|e| e.to_string())?;
-        let conn = Connection::open(db_file()).map_err(|e| e.to_string())?;
+        let path = db_file();
+        warn_if_recreating_database(&path);
+        let conn = Connection::open(&path).map_err(|e| e.to_string())?;
         conn.execute(
             "CREATE TABLE IF NOT EXISTS balance_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2072,12 +2819,65 @@ mod windows_app {
                 currency TEXT NOT NULL,
                 total REAL NOT NULL,
                 topped REAL NOT NULL,
-                granted REAL NOT NULL
+                granted REAL NOT NULL,
+                service_status TEXT NOT NULL DEFAULT 'unknown'
             )",
             [],
         )
         .map_err(|e| e.to_string())?;
+        ensure_history_service_status_column(&conn)?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS secure_settings (
+                key TEXT PRIMARY KEY,
+                value BLOB NOT NULL,
+                updated_at TEXT NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        mark_database_initialized().map_err(|e| e.to_string())?;
         Ok(conn)
+    }
+
+    fn ensure_history_service_status_column(conn: &Connection) -> Result<(), String> {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(balance_history)")
+            .map_err(|e| e.to_string())?;
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| e.to_string())?;
+        for column in columns {
+            if column.map_err(|e| e.to_string())? == "service_status" {
+                return Ok(());
+            }
+        }
+        conn.execute(
+            "ALTER TABLE balance_history ADD COLUMN service_status TEXT NOT NULL DEFAULT 'unknown'",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn warn_if_recreating_database(path: &Path) {
+        let marker = db_marker_file();
+        if marker.exists() && !path.exists() {
+            let message = format!(
+                "SQLite database is missing: {}. A new database will be created; balance history and API keys stored only in SQLite may be lost.",
+                path.display()
+            );
+            DATABASE_RECREATED_WARNING.store(true, Ordering::SeqCst);
+            eprintln!("{message}");
+            log_line(&message);
+        }
+    }
+
+    fn mark_database_initialized() -> std::io::Result<()> {
+        let marker = db_marker_file();
+        if !marker.exists() {
+            fs::write(marker, "1\n")?;
+        }
+        Ok(())
     }
 
     fn prune_logs_on_startup(config: &AppConfig) -> std::io::Result<()> {
@@ -2271,6 +3071,18 @@ mod windows_app {
             ("en", "alert_mode_once") => "Once",
             ("en", "api_alert_label") => "API service status alerts",
             ("en", "retention_label") => "Log & record retention (days):",
+            ("en", "export_path_label") => "Export path:",
+            ("en", "proxy_label") => "HTTP/HTTPS proxy:",
+            ("en", "theme_label") => "Icon theme:",
+            ("en", "theme_default") => "Default",
+            ("en", "theme_contrast") => "High Contrast",
+            ("en", "theme_bright") => "Bright",
+            ("en", "theme_dark_mode") => "Dark Mode",
+            ("en", "theme_mono") => "Monochrome",
+            ("en", "theme_custom") => "Custom",
+            ("en", "icon_stroke_label") => "Icon stroke",
+            ("en", "custom_colors_label") => "Custom colors: OK / Low / Degraded / No data",
+            ("en", "color_hex_error") => "Custom colors must be 6-digit hex values.",
             ("en", "save") => "Save",
             ("en", "cancel") => "Cancel",
             ("en", "refresh") => "Refresh",
@@ -2289,6 +3101,9 @@ mod windows_app {
             ("en", "history_range") => "Range",
             ("en", "history_avg") => "Average",
             ("en", "history_change") => "Change",
+            ("en", "daily_rate") => "Avg",
+            ("en", "estimated_remaining") => "Est.",
+            ("en", "not_enough_data") => "Not enough data",
             ("en", "prev_page") => "Previous",
             ("en", "next_page") => "Next",
             ("en", "api_key_empty") => "API Key is required.",
@@ -2326,7 +3141,11 @@ mod windows_app {
             ("en", "threshold") => "threshold",
             ("en", "api_key_missing_title") => "DeepSeek API Key required",
             ("en", "api_key_missing_body") => {
-                "Enter api_key in config.json. It stays on this computer and is not sent to the developer."
+                "Open Settings and enter your API key. It is encrypted locally and is not sent to the developer."
+            }
+            ("en", "database_recreated_title") => "DeepSeek database recreated",
+            ("en", "database_recreated_body") => {
+                "The SQLite database was missing and has been recreated. Balance history and API keys stored only in SQLite may be lost."
             }
             ("en", "api_degraded_title") => "⚠ DeepSeek API Degraded",
             ("en", "api_degraded_msg") => "API service status has changed: ",
@@ -2355,6 +3174,18 @@ mod windows_app {
             (_, "alert_mode_once") => "仅提醒一次",
             (_, "api_alert_label") => "API 服务状态变化提醒",
             (_, "retention_label") => "日志和记录保留天数：",
+            (_, "export_path_label") => "数据导出路径：",
+            (_, "proxy_label") => "HTTP/HTTPS 代理：",
+            (_, "theme_label") => "图标主题：",
+            (_, "theme_default") => "默认",
+            (_, "theme_contrast") => "高对比",
+            (_, "theme_bright") => "明亮",
+            (_, "theme_dark_mode") => "暗色模式",
+            (_, "theme_mono") => "纯灰度",
+            (_, "theme_custom") => "自定义",
+            (_, "icon_stroke_label") => "图标描边",
+            (_, "custom_colors_label") => "自定义颜色：正常 / 低额 / 异常 / 无数据",
+            (_, "color_hex_error") => "自定义颜色必须是 6 位 hex 值。",
             (_, "save") => "保存",
             (_, "cancel") => "取消",
             (_, "refresh") => "刷新",
@@ -2373,6 +3204,9 @@ mod windows_app {
             (_, "history_range") => "范围",
             (_, "history_avg") => "平均",
             (_, "history_change") => "变化",
+            (_, "daily_rate") => "日均消耗",
+            (_, "estimated_remaining") => "预计可用",
+            (_, "not_enough_data") => "数据不足，无法计算",
             (_, "prev_page") => "上一页",
             (_, "next_page") => "下一页",
             (_, "api_key_empty") => "API Key 不能为空。",
@@ -2408,7 +3242,11 @@ mod windows_app {
             (_, "threshold") => "预警线",
             (_, "api_key_missing_title") => "请输入 DeepSeek API Key",
             (_, "api_key_missing_body") => {
-                "请在 config.json 填写 api_key。配置仅保存在本机，开发者不会获取。"
+                "请打开设置填写 API Key。它会在本机加密保存，开发者不会获取。"
+            }
+            (_, "database_recreated_title") => "DeepSeek 数据库已重建",
+            (_, "database_recreated_body") => {
+                "SQLite 数据库文件缺失，已自动重建。历史记录以及仅存于 SQLite 的 API Key 可能已丢失。"
             }
             (_, "api_degraded_title") => "⚠ DeepSeek API 服务异常",
             (_, "api_degraded_msg") => "检测到 API 服务状态异常：",
@@ -2440,12 +3278,51 @@ mod windows_app {
             assert_eq!(normalize_service_status("partial_outage"), "major");
             assert!(status_rank("critical") > status_rank("major"));
             assert!(service_degraded("minor"));
+            assert_eq!(AppConfig::default().language, "en");
             assert_eq!(icon_label(99.9), "99");
             assert_eq!(icon_label(100.0), "OK");
+            let now = Local::now();
+            assert_eq!(
+                relative_time("zh", now - ChronoDuration::minutes(5), now),
+                "5 分钟前"
+            );
+            assert!(demo::is_enabled(" demo "));
+            let conn = Connection::open_in_memory().expect("in-memory sqlite opens");
+            demo::prepare(&conn).expect("demo table prepares");
+            let demo = demo::balances(&conn).expect("demo balances load");
+            let demo_balance = demo.get("CNY").expect("demo balance exists");
+            assert_eq!(demo_balance.total_balance, 666.0);
+            assert_eq!(demo_balance.topped_up_balance, 114_514.0);
+            assert_eq!(demo_balance.granted_balance, 1_919_810.0);
+            assert_eq!(
+                demo::consumption_rate(&conn)
+                    .expect("demo rate loads")
+                    .daily_rate,
+                114_514.0
+            );
+            assert!(demo::history(&conn, 24).expect("demo history loads").len() > 1);
 
             let mut state = RuntimeState::default();
             state.config.threshold_yuan = 10.0;
             state.balances.insert("CNY".to_string(), balance(5.0));
+            let rate = ConsumptionRate {
+                daily_rate: 1.5,
+                hours_left: 28.0 * 24.0 + 4.0,
+                currency: "CNY".to_string(),
+            };
+            let message = balance_notification_message(
+                "zh",
+                &state.balances,
+                Some(&rate),
+                None,
+                Some(now - ChronoDuration::minutes(5)),
+                "none",
+                now,
+            );
+            assert!(message.contains("💰 5.00 CNY"));
+            assert!(message.contains("📊 日均消耗 1.50 CNY | 预计可用 28 天 4 小时"));
+            assert!(message.contains("📡 DeepSeek API 服务状态：🟢 服务正常"));
+            assert!(message.contains("🕐 上次查询：5 分钟前"));
             assert!(is_low_balance(&state));
             assert!(should_low_balance_alert(&mut state, true));
             assert!(!should_low_balance_alert(&mut state, true));
@@ -2458,6 +3335,37 @@ mod windows_app {
         }
 
         #[test]
+        fn keeps_shared_theme_config_contracts() {
+            let colors = parse_icon_colors([
+                "#3c6966".to_string(),
+                "b9463c".to_string(),
+                "78695a".to_string(),
+                "69696e".to_string(),
+            ])
+            .unwrap();
+            assert_eq!(colors.get("ok").map(String::as_str), Some("3c6966"));
+            assert!(parse_icon_colors([
+                "bad".to_string(),
+                "b9463c".to_string(),
+                "78695a".to_string(),
+                "69696e".to_string(),
+            ])
+            .is_err());
+
+            let mut config = AppConfig::default();
+            assert_eq!(theme_color(&config, "ok").0, [60, 105, 102, 255]);
+            config.theme = "contrast".to_string();
+            assert_eq!(theme_color(&config, "low").0, [212, 52, 46, 255]);
+            config.theme = "custom".to_string();
+            config.icon_colors = colors;
+            assert_eq!(theme_color(&config, "degraded").0, [120, 105, 90, 255]);
+            assert_eq!(
+                custom_or_default_colors(&AppConfig::default()).get("nodata"),
+                Some(&"69696e".to_string())
+            );
+        }
+
+        #[test]
         fn summarizes_history_csv_and_log_retention() {
             let records = vec![
                 HistoryRecord {
@@ -2466,6 +3374,7 @@ mod windows_app {
                     total: 10.0,
                     topped: 8.0,
                     granted: 2.0,
+                    service_status: "none".to_string(),
                 },
                 HistoryRecord {
                     timestamp: "2026-01-02 00:00:00".to_string(),
@@ -2473,14 +3382,26 @@ mod windows_app {
                     total: 7.0,
                     topped: 5.0,
                     granted: 2.0,
+                    service_status: "minor".to_string(),
                 },
             ];
             let summary = summarize_history(&records);
             assert_eq!(summary[0].records, 2);
             assert_eq!(summary[0].latest_total, 7.0);
             assert_eq!(summary[0].change_total, -3.0);
-            assert!(history_csv(&records).contains("2026-01-02 00:00:00,CNY,7.00,5.00,2.00"));
+            assert!(history_csv(&records).contains("2026-01-02 00:00:00,CNY,7.00,5.00,2.00,minor"));
             assert_eq!(csv_escape("CNY,\"test\""), "\"CNY,\"\"test\"\"\"");
+            assert_eq!(
+                history_export_file(r"C:\dsbm-export").parent().unwrap(),
+                Path::new(r"C:\dsbm-export")
+            );
+            assert_eq!(
+                history_export_file("")
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy(),
+                history_export_filename()
+            );
 
             let cutoff =
                 NaiveDateTime::parse_from_str("2026-01-02 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();

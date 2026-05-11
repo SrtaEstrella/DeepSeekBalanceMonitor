@@ -87,10 +87,74 @@ if [ "$INSTALL_PLASMOID" -eq 1 ]; then
 else
     echo "Skipped Plasma widget installation"
 fi
-echo "Create config: dsmon init-config"
+INSTALL_USER="${SUDO_USER:-}"
+run_dsmon_for_user() {
+    if [ -n "$INSTALL_USER" ] && [ "$INSTALL_USER" != "root" ] && command -v runuser >/dev/null 2>&1; then
+        runuser -u "$INSTALL_USER" -- /usr/local/bin/dsmon "$@"
+    else
+        /usr/local/bin/dsmon "$@"
+    fi
+}
+reload_user_systemd() {
+    if ! command -v systemctl >/dev/null 2>&1; then
+        return
+    fi
+    if [ -n "$INSTALL_USER" ] && [ "$INSTALL_USER" != "root" ] && command -v runuser >/dev/null 2>&1; then
+        install_uid="$(id -u "$INSTALL_USER" 2>/dev/null || true)"
+        if [ -n "$install_uid" ] && [ -d "/run/user/$install_uid" ]; then
+            echo "Reloading user systemd manager for $INSTALL_USER..."
+            runuser -u "$INSTALL_USER" -- env XDG_RUNTIME_DIR="/run/user/$install_uid" systemctl --user daemon-reload || true
+            return
+        fi
+    fi
+    echo "Reload user systemd manually if needed:"
+    echo "  systemctl --user daemon-reload"
+}
+prompt_api_key() {
+    if [ ! -t 0 ]; then
+        echo "Set it with: dsmon set-key <api_key>"
+        return
+    fi
+    printf "Enter DeepSeek API key now (leave blank to skip): "
+    HIDE_INPUT=0
+    if stty -echo 2>/dev/null; then
+        HIDE_INPUT=1
+    fi
+    IFS= read -r API_KEY || API_KEY=""
+    if [ "$HIDE_INPUT" -eq 1 ]; then
+        stty echo
+    fi
+    printf "\n"
+    if [ -z "$API_KEY" ]; then
+        echo "Skipped API key setup. Set it later with: dsmon set-key <api_key>"
+        return
+    fi
+    if printf "%s\n" "$API_KEY" | run_dsmon_for_user set-key; then
+        echo "Running check after saving API key..."
+        if ! run_dsmon_for_user check; then
+            echo "API key was saved, but the check still failed. Please review the output above."
+        fi
+    else
+        echo "Failed to save API key. Set it later with: dsmon set-key <api_key>" >&2
+    fi
+}
+echo "Running first check..."
+CHECK_STATUS=0
+CHECK_OUTPUT="$(run_dsmon_for_user check 2>&1)" || CHECK_STATUS=$?
+if [ -n "$CHECK_OUTPUT" ]; then
+    printf "%s\n" "$CHECK_OUTPUT"
+fi
+if [ "$CHECK_STATUS" -eq 2 ]; then
+    prompt_api_key
+elif [ "$CHECK_STATUS" -ne 0 ]; then
+    case "$CHECK_OUTPUT" in
+        *"Invalid API key"*|*"401 Unauthorized"*) prompt_api_key ;;
+        *) echo "First check failed for a non-key reason. Configure the API key later with: dsmon set-key <api_key>" ;;
+    esac
+fi
+reload_user_systemd
 echo "Run dsmon as your normal user; root is only needed for this installer."
 echo "Enable daemon for the current user:"
-echo "  systemctl --user daemon-reload"
 echo "  systemctl --user enable --now dsmon.service"
 if [ "$INSTALL_PLASMOID" -eq 1 ]; then
     echo "Add widget: right-click panel/desktop -> Add Widgets -> DeepSeek Balance Monitor"

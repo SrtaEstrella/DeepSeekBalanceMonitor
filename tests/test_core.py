@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 from src import api_client
+from src.config import DEFAULT_CONFIG, T
 from src.app_state import AppState
 
 # Skip macOS-specific tests on non-macOS platforms
@@ -71,6 +72,17 @@ class AppStateTests(unittest.TestCase):
         self.assertIsNone(state.check_api_status_alert())
         state.service_status = {"api_operational": True}
         self.assertEqual(state.check_api_status_alert(), "recovered")
+
+class ConfigContractTests(unittest.TestCase):
+    def test_v12_config_fields_and_notification_text_exist(self):
+        for key in ("retention_days", "theme", "icon_colors", "icon_stroke",
+                    "export_path", "http_proxy"):
+            self.assertIn(key, DEFAULT_CONFIG)
+
+        english_line = T("bal_line", "en", balance="12.34", code="CNY",
+                         topped="10.00", granted="2.34")
+        self.assertEqual(english_line, "12.34 CNY (Topped 10.00, Granted 2.34)")
+        self.assertEqual(T("service_status", "en"), "DeepSeek API Status: ")
 
 @unittest.skipUnless(sys.platform == "darwin", "macOS only")
 class MacKeystoreTests(unittest.TestCase):

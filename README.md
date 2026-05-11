@@ -13,6 +13,27 @@ The desktop widget is only supported on KDE Plasma 6.
 
 ---
 
+## Current Version Highlights
+
+- Custom icon styling with 5 preset colour themes, custom hex colours, and an icon stroke toggle.
+- History viewer with paginated balance records, an interactive trend chart, and consumption rate analysis.
+- CSV export with a configurable save path.
+- Consumption rate estimation in balance notifications and the history viewer.
+- HTTP proxy support for restricted network environments.
+- Balance detail notifications now use emoji-prefixed lines and relative last-check time.
+
+Rust v1.2:
+
+- Rust Windows and Rust Linux store API keys encrypted in SQLite `secure_settings`; legacy plaintext `config.json` keys are migrated and removed.
+- Rust demo mode is enabled by saving `demo` as the API key and uses an isolated `demo_mode_balance` table instead of real API calls.
+- Rust Linux adds `dsmon set-key` and `dsmon set <field> <value>`; the daemon reloads configuration on each polling cycle, CLI output stays English-only, and the installer can prompt for an API key.
+- The Plasma 6 widget adds a transparent liquid-glass desktop view with balance, last check, service status, estimated availability, refresh control, and emoji status text.
+
+Python v1.2:
+
+- Demo mode includes a developer tools panel for testing without a real API key.
+- Windows Credential Manager integration for encrypted API key storage.
+
 ## Features
 
 - **Tray icon with balance** — Balance shown as a number on a coloured rounded rectangle. Teal (OK), red (low balance), warm gray (API service degraded), gray (no data yet). 5 customisable themes + custom hex colours.
@@ -96,21 +117,25 @@ cargo +1.77.2 build --release --locked
 Release tarballs install `/usr/local/bin/dsmon`, `/etc/systemd/user/dsmon.service`, and, on Plasma 6 systems, the optional Plasma widget:
 
 ```bash
-tar -xzf deepseek-balance-monitor-1.1-linux-x86_64.tar.gz
-cd deepseek-balance-monitor-1.1-linux-x86_64
+tar -xzf deepseek-balance-monitor-*-linux-x86_64.tar.gz
+cd deepseek-balance-monitor-*-linux-x86_64
 sudo ./install.sh
 ```
 
-Useful Linux CLI commands:
+CLI is currently available only in the Rust Linux build. Windows and MacOS builds use GUI/tray controls.
 
-```bash
-dsmon init-config
-dsmon check
-dsmon daemon
-dsmon history [days]
-dsmon history export [days] [currency|all] [path|-]
-dsmon widget-status
-```
+Useful Linux CLI operations:
+
+| Command | Purpose |
+|---|---|
+| `dsmon init-config` | Create the default config file if it does not exist |
+| `dsmon set-key` | Read an API key from stdin and store it encrypted in SQLite; enter `demo` to enable demo mode |
+| `dsmon set <field> <value>` | Update one config field, such as `interval`, `threshold`, `ui-language`, `http-proxy`, `theme`, or `color-ok` |
+| `dsmon check` | Run one balance check and print the result in English |
+| `dsmon daemon` | Run the polling loop used by the user systemd service |
+| `dsmon history [days]` | Print a balance history summary |
+| `dsmon history export [days] [currency\|all] [path\|-]` | Export history as CSV; `-` writes CSV to stdout |
+| `dsmon widget-status` | Print JSON status consumed by the Plasma widget |
 
 **MacOS (`src/mac/`):**
 
@@ -126,9 +151,9 @@ bash ../scripts/build_mac.sh
 |---|---|---|---|---|
 | Runtime | Python + pystray + Tkinter | Native Rust + native-windows-gui | Native Rust CLI | Python + rumps + webview |
 | Min OS | Windows 10+ | Windows 7 SP1+ | RHEL 8 / Ubuntu 20.04 era glibc | MacOS 10.14+ |
-| First launch (no key) | Opens settings dialog | Opens `config.json` in editor | Prints config path and creates config | Opens settings window |
+| First launch (no key) | Opens settings dialog | Opens settings dialog | Installer/check prompts for `dsmon set-key` | Opens settings window |
 | Auto-start | Registry Run key | Startup folder shortcut | systemd user service | Login items |
-| API key storage | Windows Credential Manager | config.json | config.json | MacOS Keychain |
+| API key storage | Windows Credential Manager | SQLite `secure_settings` encrypted with Windows DPAPI | SQLite `secure_settings` encrypted locally | MacOS Keychain |
 
 ## Project Structure
 
@@ -191,13 +216,13 @@ Windows builds store settings in `%APPDATA%\DeepSeek Balance Monitor\config.json
 }
 ```
 
-API keys are stored in the system credential manager (Windows Credential Manager / MacOS Keychain) and never written to this file.
+API keys are not written to this file. Python Windows uses Windows Credential Manager, Python MacOS uses Keychain, and Rust Windows/Linux store encrypted keys in SQLite `secure_settings`.
 
 Linux `dsmon` stores settings in `~/.config/deepseek-balance-monitor/config.json` and logs in `~/.local/state/deepseek-balance-monitor/app.log`.
 
 Windows logs are written to `%APPDATA%\DeepSeek Balance Monitor\app.log`.
 
-Rust Windows and Rust Linux store balance history in `balance_history.db` next to their app data. History uses the same `retention_days` setting as log cleanup. The Windows settings dialog and Plasma widget settings include a History tab with days/currency filters, trend summary, chart, and CSV export. Linux CLI output stays English-only and `dsmon history` prints text statistics instead of raw rows.
+Rust Windows and Rust Linux store encrypted settings and balance history in `balance_history.db` next to their app data. History uses the same `retention_days` setting as log cleanup. The Windows settings dialog and Plasma widget settings include a History tab with days/currency filters, trend summary, chart, and CSV export. Linux CLI output stays English-only and `dsmon history` prints text statistics instead of raw rows.
 
 ## Tray Menu
 
@@ -223,46 +248,7 @@ Colours are customisable via 5 presets or custom hex values in the settings dial
 
 ## Changelog
 
-### v1.1
-
-**Added**
-
-- API service status polling via `status.deepseek.com`. Tray icon turns warm gray when API is degraded; status changes trigger independent desktop notifications
-- "Top Up" menu item that opens `platform.deepseek.com/top_up` in the browser
-- SQLite balance history storage with configurable log & record retention (default 30 days)
-- Community-contributed ports: Rust-Win (native Rust, Win7+), Rust-Linux (CLI + Plasma 6 widget), Py-Mac (native MacOS, Keychain-secured)
-  - Rust builds: history chart, days/currency filters, CSV export, `dsmon history` CLI commands
-  - Plasma widget daemon start/stop action with command-error notifications
-  - Windows 7/8.1 root certificate update helper script
-
-**Changed**
-
-- Low balance alerts: three modes (never / always / once per drop), configured via dropdown, default once
-- Redesigned balance detail notification card: fixed title, inline breakdown, service status line always visible
-- Settings dialog validates all numeric inputs on save and shows a warning for out-of-range values
-
-**Technical**
-
-- Replaced `requests` with Python stdlib `urllib.request`
-
-### v1.2 (2026-05-11)
-
-**Added**
-
-- Custom icon styling: 5 preset colour themes (Default / High Contrast / Bright / Dark Mode / Monochrome) + custom hex colour editor and icon stroke toggle
-- History viewer: paginated table of all balance records with interactive trend chart and consumption rate analysis
-- CSV export with configurable save path
-- Consumption rate estimation: daily average spend and projected days/hours remaining, visible in balance notification and history viewer
-- Demo mode (`--demo`) with a developer tools panel for interactively testing various states
-- HTTP proxy support for restricted network environments
-- Windows Credential Manager integration: API key stored encrypted, never written to plaintext config.json
-
-**Changed**
-
-- Balance detail notification: emoji-prefixed lines, relative time on last-check, service status between rate and time
-- Shared tk root window: settings, history, and dev tools no longer conflict when opened together; history dialog supports singleton raise-to-front
-- Settings dialog: input validation with clear error messages, version info, contributor credits, clickable project link
-- API service status recorded alongside each balance entry in the local database
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
