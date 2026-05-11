@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek Balance Monitor</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div id="app">
+  <!-- Navigation -->
+  <nav>
+    <div class="nav-side"></div>
+    <div class="nav-group">
+      <button class="nav-btn active" data-view="chart">Chart</button>
+      <button class="nav-btn" data-view="settings">Settings</button>
+    </div>
+    <div class="nav-side" style="justify-content: flex-end;">
+      <div id="api-status-indicator" class="status-indicator">
+        <span class="status-dot"></span>
+        <span id="api-status-val" class="status-val">-</span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ─── Chart View ─── -->
+  <section id="chart-view" class="view-section active">
+    <div class="scroll-area">
+      <div class="card">
+        <div class="card-header">
+          <h3 data-i18n="balance_history">Balance History</h3>
+          <div id="rate-info"></div>
+        </div>
+        <div class="card-body">
+          <div id="chart-container">
+            <button id="btn-topup" class="btn-topup chart-overlay-btn">
+              <span data-i18n="top_up">Top Up</span>
+            </button>
+            <canvas id="balance-chart"></canvas>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+          <div class="card-header">
+            <h3 data-i18n="history_table">History Records</h3>
+            <div class="header-actions">
+              <button id="btn-export-csv" class="btn" style="height: 26px; padding: 0 10px; font-size: 11px;">CSV</button>
+              <input type="date" id="history-date-filter" class="input-text" style="width: 100px; height: 26px; padding: 0 6px; font-size: 11px; outline: none; border: 1px solid var(--border-muted); border-radius: 6px; background: var(--bg-input); color: var(--text-primary); text-align: center; box-sizing: border-box;">
+            </div>
+          </div>
+        <div class="table-wrap">
+          <table id="history-table">
+            <thead>
+              <tr>
+                <th data-i18n="th_time">Time</th>
+                <th data-i18n="th_currency">Curr</th>
+                <th class="num" data-i18n="th_total">Total</th>
+                <th class="num" data-i18n="th_topped">Topped</th>
+                <th class="num" data-i18n="th_granted">Granted</th>
+                <th data-i18n="th_status">Status</th>
+              </tr>
+            </thead>
+            <tbody id="table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Settings View ─── -->
+  <section id="settings-view" class="view-section">
+    <div class="scroll-area">
+      <div class="settings-grid">
+
+        <!-- Full width: API Key -->
+        <div class="card card-full">
+          <div class="card-header">
+            <h3 data-i18n="api_key_label">API Key</h3>
+          </div>
+          <div class="card-body">
+            <div class="input-row">
+              <input type="password" id="api_key" class="input-text full" placeholder="sk-...">
+              <button id="toggle_key" class="btn-icon" title="Show/Hide">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-eye"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Currency -->
+        <div class="card">
+          <div class="card-header">
+            <h3 data-i18n="currency">Currency</h3>
+          </div>
+          <div class="card-body">
+            <select id="currency" class="input-select" style="width:100%">
+              <option value="CNY">CNY</option>
+              <option value="USD">USD</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Language -->
+        <div class="card">
+          <div class="card-header">
+            <h3 data-i18n="language_label">Language</h3>
+          </div>
+          <div class="card-body">
+            <select id="language" class="input-select" style="width:100%">
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Alerts -->
+        <div class="card">
+          <div class="card-header">
+            <h3 data-i18n="alert_mode_label">Alerts</h3>
+          </div>
+          <div class="card-body">
+            <div class="field-row field-spacer">
+              <div class="field-label" data-i18n="threshold_label">Threshold</div>
+              <div class="field-control">
+                <input type="number" id="threshold_yuan" class="input-number" min="0" max="10000" step="0.5">
+              </div>
+            </div>
+            <div class="field-row field-spacer">
+              <div class="field-label" data-i18n="alert_mode_label">Alert Mode</div>
+              <div class="field-control">
+                <select id="alert_mode" class="input-select">
+                  <option value="never" data-i18n="alert_mode_never">Never</option>
+                  <option value="always" data-i18n="alert_mode_always">Always</option>
+                  <option value="once" data-i18n="alert_mode_once">Once</option>
+                </select>
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field-label" data-i18n="api_alert_label">API Alert</div>
+              <div class="field-control">
+                <label class="toggle-label">
+                  <input type="checkbox" id="api_alert_enabled">
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Display -->
+        <div class="card">
+          <div class="card-header">
+            <h3 data-i18n="theme_label">Display</h3>
+          </div>
+          <div class="card-body">
+            <div class="field-row field-spacer">
+              <div class="field-label" data-i18n="theme_label">Theme</div>
+              <div class="field-control">
+                <select id="theme" class="input-select">
+                  <option value="default" data-i18n="theme_default">Default</option>
+                  <option value="contrast" data-i18n="theme_contrast">Contrast</option>
+                  <option value="bright" data-i18n="theme_bright">Bright</option>
+                  <option value="dark_mode" data-i18n="theme_dark_mode">Dark</option>
+                  <option value="mono" data-i18n="theme_mono">Mono</option>
+                  <option value="custom" data-i18n="theme_custom">Custom</option>
+                </select>
+              </div>
+            </div>
+            <div id="theme-preview" class="theme-preview" style="margin-bottom:12px"></div>
+            <div id="row-icon-stroke" class="field-row field-spacer">
+              <div class="field-label" data-i18n="icon_stroke_label">Stroke</div>
+              <div class="field-control">
+                <label class="toggle-label">
+                  <input type="checkbox" id="icon_stroke">
+                </label>
+              </div>
+            </div>
+            <div id="custom-colors" class="custom-colors" style="display:none">
+              <div class="color-row"><span class="color-label">OK</span><span class="hash">#</span><input type="text" id="color_ok" class="input-color" maxlength="6" placeholder="3C6966"></div>
+              <div class="color-row"><span class="color-label">Low</span><span class="hash">#</span><input type="text" id="color_low" class="input-color" maxlength="6" placeholder="B9463C"></div>
+              <div class="color-row"><span class="color-label">Degraded</span><span class="hash">#</span><input type="text" id="color_degraded" class="input-color" maxlength="6" placeholder="78695A"></div>
+              <div class="color-row"><span class="color-label">No Data</span><span class="hash">#</span><input type="text" id="color_nodata" class="input-color" maxlength="6" placeholder="69696E"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Full width: Advanced -->
+        <div class="card card-full">
+          <div class="card-header">
+            <h3 data-i18n="other_settings">其他设置</h3>
+          </div>
+          <div class="card-body">
+            <div class="field-row field-spacer">
+              <div class="field-label">
+                <span data-i18n="interval_label">Interval</span>
+                <span class="field-hint" data-i18n="interval_hint">Hint</span>
+              </div>
+              <div class="field-control">
+                <input type="number" id="interval_minutes" class="input-number" min="1" max="1440">
+              </div>
+            </div>
+            <div class="field-row field-spacer">
+              <div class="field-label">
+                <span data-i18n="retention_label">Retention</span>
+                <span class="field-hint" data-i18n="retention_hint">days</span>
+              </div>
+              <div class="field-control">
+                <input type="number" id="retention_days" class="input-number" min="1" max="3650">
+              </div>
+            </div>
+            <div class="field-row field-spacer">
+              <div class="field-label" data-i18n="auto_start_label">Auto Start</div>
+              <div class="field-control">
+                <label class="toggle-label"><input type="checkbox" id="auto_start"></label>
+              </div>
+            </div>
+            <div class="field-row field-spacer">
+              <div class="field-label" data-i18n="export_label">Export Path</div>
+              <div class="input-row" style="flex:1">
+                <input type="text" id="export_path" class="input-text" readonly placeholder="">
+                <button id="browse_export" class="btn" style="flex-shrink:0" data-i18n="export_browse">Browse</button>
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field-label">
+                <span data-i18n="proxy_label">HTTP Proxy</span>
+                <span class="field-hint" data-i18n="proxy_hint">Hint</span>
+              </div>
+              <div class="field-control" style="flex:1">
+                <input type="text" id="http_proxy" class="input-text full" placeholder="http://">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Floating Save Button -->
+        <button id="fab-save" class="fab-btn" title="Save Settings">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                <polyline points="7 3 7 8 15 8"></polyline>
+            </svg>
+        </button>
+
+      </div>
+    </div>
+  </section>
+</div>
+
+<script src="js/vendor/chart.min.js"></script>
+<script src="js/api.js?v=3"></script>
+<script src="js/settings.js?v=3"></script>
+<script src="js/chart.js?v=3"></script>
+<script src="js/app.js?v=3"></script>
+</body>
+</html>

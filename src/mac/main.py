@@ -1,6 +1,8 @@
 import os
+import subprocess
 import sys
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -14,12 +16,27 @@ import tempfile
 import rumps
 
 try:
-    from AppKit import NSImage
+    from AppKit import NSImage, NSColor, NSSize
     HAS_PYOBJC = True
 except ImportError:
     HAS_PYOBJC = False
 
+# Colored SF Symbol config for API service status
+_STATUS_SYMBOLS = {
+    "none":        ("checkmark.circle.fill", (50, 195, 90)),
+    "minor":       ("exclamationmark.triangle.fill", (245, 185, 50)),
+    "major":       ("xmark.circle.fill", (220, 70, 60)),
+    "critical":    ("xmark.circle.fill", (220, 20, 30)),
+    "maintenance": ("wrench.circle.fill", (245, 155, 50)),
+    "_default":    ("questionmark.circle.fill", (140, 140, 150)),
+    "_error":      ("exclamationmark.circle.fill", (185, 70, 60)),
+}
+
 from src.config import load_config, save_config, T as _T, log, CONFIG_DIR
+
+# WebView settings sentinel & PID
+_SETTINGS_SENTINEL = CONFIG_DIR / ".settings_changed"
+_SETTINGS_PID = CONFIG_DIR / "settings.pid"
 
 # --- macOS Local Translations ---
 _MAC_T = {
@@ -29,6 +46,10 @@ _MAC_T = {
         "currency": "货币",
         "checking": "查询中…",
         "error_fetch": "查询出错",
+        "check_now": "立即查询",
+        "top_up": "充值",
+        "settings": "设置",
+        "quit": "退出",
     },
     "en": {
         "topped_up": "Topped Up",
@@ -36,6 +57,10 @@ _MAC_T = {
         "currency": "Currency",
         "checking": "Checking…",
         "error_fetch": "Fetch Error",
+        "check_now": "Check Now",
+        "top_up": "Top Up",
+        "settings": "Settings",
+        "quit": "Quit",
     }
 }
 
@@ -45,8 +70,10 @@ def T(key, lang="zh", **kwargs):
     if text:
         return text.format(**kwargs) if kwargs else text
     return _T(key, lang, **kwargs)
-from src.api_client import fetch_balance
+from src.api_client import fetch_balance, fetch_service_status
+from src.icon_renderer import _get_colors, _text_color
 from src.mac.keystore import decrypt_api_key
+from src.storage import save_balance_record
 
 # macOS system font attempts
 import glob
@@ -126,46 +153,36 @@ def notify_mac(title, message, subtitle=""):
         except Exception as e:
             log(f"Osascript notification failed: {e}")
 
-def create_mac_icon(label: str, is_error: bool, is_low: bool) -> str:
-    # Use 4x supersampling for perfect anti-aliasing on Retina displays
+def create_mac_icon(label: str, fill_color: tuple, text_color: tuple) -> str:
+    """Render a macOS menubar icon with given colors.
+    fill_color: RGBA tuple for background.
+    text_color: RGBA tuple for label text.
+    """
     scale = 4
-    base_size = 18  # 18pt is standard, but we'll use more padding to make it look smaller
+    base_size = 18
     size = base_size * scale
-    
+
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    
-    fill_color = (60, 105, 102, 255) # Teal
-    if is_error or is_low:
-        fill_color = (185, 70, 60, 255) # Red
-    elif label == "...":
-        fill_color = (105, 105, 110, 255) # Gray
-        
-    # DRAW BOX: Make it smaller than the 18pt canvas (16pt effective)
-    # Token Meter uses roughly 2pt margin at top/bottom
-    margin_outer = 1.85 * scale 
-    radius = 2.75 * scale # Tighter corners like Token Meter
-    
-    draw.rounded_rectangle([margin_outer, margin_outer, size - margin_outer, size - margin_outer], 
+
+    margin_outer = 1.85 * scale
+    radius = 2.75 * scale
+
+    draw.rounded_rectangle([margin_outer, margin_outer, size - margin_outer, size - margin_outer],
                            radius=radius, fill=fill_color)
-    
-    # FONT: Make it bold and clear
+
     font_size = 10 * scale
     font = None
-    # Try to find a bold variant of the font if possible
-    bold_font_path = _get_bundle_path("assets/font/ShareTech-Regular.ttf") # We only have regular, so we'll rely on size
-    
     for fn in _FONTS:
         try:
             font = ImageFont.truetype(fn, font_size)
-            font.path = fn 
+            font.path = fn
             break
         except Exception:
             continue
     if not font:
         font = ImageFont.load_default()
-        
-    # Shrink font if text is too wide
+
     margin_inner = 1 * scale
     while hasattr(font, 'getlength') and font.getlength(label) > (size - margin_outer*2 - margin_inner*2) and font_size > 6:
         font_size -= 0.5 * scale
@@ -174,21 +191,19 @@ def create_mac_icon(label: str, is_error: bool, is_low: bool) -> str:
             font.path = font.path
         except: break
 
-    # Center label
     if hasattr(draw, 'textbbox'):
         bbox = draw.textbbox((0, 0), label, font=font)
         w = bbox[2] - bbox[0]
         h = bbox[3] - bbox[1]
         x = (size - w) / 2 - bbox[0]
         y = (size - h) / 2 - bbox[1]
-        draw.text((x, y), label, fill=(255, 255, 255, 255), font=font)
+        draw.text((x, y), label, fill=text_color, font=font)
     else:
-        draw.text((size/2, size/2), label, fill=(255, 255, 255, 255), font=font, anchor="mm")
-    
-    # Save as 2x (36px)
-    final_size = base_size * 2 
+        draw.text((size/2, size/2), label, fill=text_color, font=font, anchor="mm")
+
+    final_size = base_size * 2
     img = img.resize((final_size, final_size), Image.Resampling.LANCZOS)
-    
+
     icon_path = os.path.join(tempfile.gettempdir(), "ds_balance_mac_icon.png")
     img.save(icon_path)
     return icon_path
@@ -196,18 +211,28 @@ def create_mac_icon(label: str, is_error: bool, is_low: bool) -> str:
 class DeepSeekBalanceMacApp(rumps.App):
     def __init__(self):
         super(DeepSeekBalanceMacApp, self).__init__("DS Balance", quit_button=None)
+
         self.config = load_config()
         self.balances = {}
         self.last_check = None
         self.error = None
+        self.service_status = None
         self._timer = None
-        
+        self._running = True
+        self._dirty_ui = False
+        self._dirty_menu = False
+
+        # Start sentinel watcher for WebView settings changes
+        threading.Thread(target=self._watch_settings_sentinel, daemon=True).start()
+
         # Build Menus
         self.info_item = rumps.MenuItem("...", callback=None)
-        self.detail_topped = rumps.MenuItem("  充值余额: -", callback=None)
-        self.detail_granted = rumps.MenuItem("  赠送余额: -", callback=None)
-        self.last_check_item = rumps.MenuItem("  上次查询: -", callback=None)
-        
+        self.detail_topped = rumps.MenuItem("...", callback=self.on_show_balance)
+        self.detail_granted = rumps.MenuItem("...", callback=self.on_show_balance)
+        self.rate_item = rumps.MenuItem("...", callback=self.on_show_balance)
+        self.last_check_item = rumps.MenuItem("...", callback=self.on_show_balance)
+        self.api_status_item = rumps.MenuItem("...", callback=lambda _: None)
+
         self.rebuild_menus()
         self.update_ui()
         self.on_check_now(None)
@@ -223,19 +248,24 @@ class DeepSeekBalanceMacApp(rumps.App):
         self.detail_topped = rumps.MenuItem("...", callback=self.on_show_balance)
         self.detail_granted = rumps.MenuItem("...", callback=self.on_show_balance)
         self.last_check_item = rumps.MenuItem("...", callback=self.on_show_balance)
-        
+        self.api_status_item = rumps.MenuItem("...", callback=lambda _: None)
+
         self.menu.add(self.info_item)
         self.menu.add(self.detail_topped)
         self.menu.add(self.detail_granted)
+        self.menu.add(self.rate_item)
         self.menu.add(self.last_check_item)
         self.menu.add(rumps.separator)
-        
-        # Strip emojis from standard localized strings
-        str_check = T("check_now", self.lang).replace("🔄", "").replace("📋", "").strip()
-        str_set = T("settings", self.lang).replace("⚙", "").replace("  ", " ").strip()
-        str_quit = T("quit", self.lang).replace("❌", "").replace(" ", "").strip()
-        
+        self.menu.add(self.api_status_item)
+        self.menu.add(rumps.separator)
+
+        str_check = T("check_now", self.lang)
+        str_topup = T("top_up", self.lang)
+        str_set = T("settings", self.lang)
+        str_quit = T("quit", self.lang)
+
         btn_check = rumps.MenuItem(str_check, callback=self.on_check_now)
+        btn_topup = rumps.MenuItem(str_topup, callback=self.on_top_up)
         btn_set = rumps.MenuItem(str_set, callback=self.on_settings)
         btn_quit = rumps.MenuItem(str_quit, callback=self.on_quit)
         
@@ -262,14 +292,16 @@ class DeepSeekBalanceMacApp(rumps.App):
                 except Exception: pass
             
             _add_sf(btn_check, "arrow.triangle.2.circlepath")
+            _add_sf(btn_topup, "creditcard")
             _add_sf(btn_set, "gearshape")
             _add_sf(btn_quit, "xmark.circle")
-            
+
         self.menu.add(btn_check)
+        self.menu.add(btn_topup)
         self.menu.add(btn_set)
         self.menu.add(rumps.separator)
         self.menu.add(btn_quit)
-        
+
         self.update_ui()
 
     def get_preferred_balance(self):
@@ -286,6 +318,38 @@ class DeepSeekBalanceMacApp(rumps.App):
         if getattr(self, '_dirty_ui', False):
             self.update_ui()
             self._dirty_ui = False
+        if getattr(self, '_dirty_menu', False):
+            try:
+                self.rebuild_menus()
+            except Exception as e:
+                log(f"Menu rebuild error: {e}")
+            self._dirty_menu = False
+
+    def _set_sf_icon(self, item, symbol_name, rgb):
+        """Apply a colored SF Symbol as a menu item image."""
+        if not HAS_PYOBJC: return
+        try:
+            from AppKit import NSImage, NSColor, NSImageSymbolConfiguration
+            img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(symbol_name, None)
+            if not img: return
+            
+            r, g, b = rgb
+            color = NSColor.colorWithDeviceRed_green_blue_alpha_(r/255.0, g/255.0, b/255.0, 1.0)
+            
+            # Hierarchical coloring (macOS 12.0+)
+            try:
+                config = NSImageSymbolConfiguration.configurationWithHierarchicalColor_(color)
+                colored_img = img.imageByApplyingSymbolConfiguration_(config)
+                item._menuitem.setImage_(colored_img)
+            except:
+                # Fallback to tinting (macOS 10.15+)
+                try:
+                    colored_img = img.imageWithTintColor_(color)
+                    item._menuitem.setImage_(colored_img)
+                except:
+                    item._menuitem.setImage_(img)
+        except Exception as e:
+            log(f"SF Symbol Error: {e}")
 
     def trigger_ui_update(self):
         self._dirty_ui = True
@@ -293,15 +357,18 @@ class DeepSeekBalanceMacApp(rumps.App):
     def update_ui(self):
         label = "..."
         is_error = self.error is not None
-        is_low = False
-        
+
+        # Determine theme-based colors
+        colors = _get_colors(self.config)
         if is_error:
+            fill = colors["low"]
             label = "!"
             self.info_item.title = f"{T('error_fetch', self.lang)}: {self.error[:20]}"
             self.detail_topped.title = "  ..."
             self.detail_granted.title = "  ..."
             self.last_check_item.title = "  ..."
         elif not self.balances:
+            fill = colors["nodata"]
             label = "..."
             self.info_item.title = T("checking", self.lang)
             self.detail_topped.title = "  ..."
@@ -313,24 +380,65 @@ class DeepSeekBalanceMacApp(rumps.App):
                 val = int(b["total_balance"])
                 t = float(self.config.get("threshold_yuan", 1.0))
                 is_low = b["total_balance"] < t
-                
-                # Format large numbers compactly
+                fill = colors["low"] if is_low else colors["ok"]
+
                 if val >= 10000:
                     label = f"{val//1000}k"
                 elif val >= 1000:
                     label = f"{val/1000:.1f}k".replace(".0k", "k")
                 else:
                     label = str(val)
-                
+
                 last_str = self.last_check.strftime("%Y-%m-%d %H:%M:%S") if self.last_check else "-"
                 self.info_item.title = f"{T('total_balance', self.lang)}: {b['total_balance']:.2f} {b['currency']}"
                 self.detail_topped.title = f"  {T('topped_up', self.lang)}: {b['topped_up_balance']:.2f}"
                 self.detail_granted.title = f"  {T('granted', self.lang)}: {b['granted_balance']:.2f}"
-                self.last_check_item.title = f"  {T('last_check', self.lang)}: {last_str}"
                 
-        # Only use custom colored icon if template is True it gets forced to B&W
-        self.template = False 
-        self.icon = create_mac_icon(label, is_error, is_low)
+                # Update consumption rate
+                from src.storage import get_consumption_rate
+                cr = get_consumption_rate()
+                if cr:
+                    daily_rate, hours_left, _curr = cr
+                    days = int(hours_left // 24)
+                    hrs = int(hours_left % 24)
+                    if self.lang == "en":
+                        self.rate_item.title = f"  Avg: {daily_rate:.2f}/day | Est: {days}d {hrs}h"
+                    else:
+                        self.rate_item.title = f"  日均消耗: {daily_rate:.2f} | 预计可用: {days}天 {hrs}小时"
+                    self.rate_item.set_callback(self.on_show_balance)
+                else:
+                    self.rate_item.title = f"  {T('not_enough_data', self.lang)}" if self.lang == "zh" else "  Not enough data"
+                    self.rate_item.set_callback(None)
+
+                self.last_check_item.title = f"  {T('last_check', self.lang)}: {last_str}"
+
+        # API status line — colored SF Symbol (or emoji fallback)
+        ss = self.service_status
+        if ss:
+            indicator = str(ss.get("indicator", "unknown")).lower()
+            status_text = T(f"status_{indicator}", self.lang)
+            if HAS_PYOBJC:
+                self.api_status_item.title = status_text
+                sym, rgb = _STATUS_SYMBOLS.get(indicator, _STATUS_SYMBOLS["_default"])
+                self._set_sf_icon(self.api_status_item, sym, rgb)
+            else:
+                emoji = {"none": "🟢", "minor": "🟡", "major": "🔴",
+                         "critical": "🔴", "maintenance": "🟠"}.get(indicator, "⚪")
+                self.api_status_item.title = f"{emoji} {status_text}"
+        elif is_error:
+            if HAS_PYOBJC:
+                self.api_status_item.title = T("status_unknown", self.lang)
+                self._set_sf_icon(self.api_status_item, *_STATUS_SYMBOLS["_error"])
+            else:
+                self.api_status_item.title = f"⚪ {T('status_unknown', self.lang)}"
+        else:
+            self.api_status_item.title = "..."
+            if HAS_PYOBJC:
+                self.api_status_item._menuitem.setImage_(None)
+
+        self.template = False
+        text_c = _text_color(fill)
+        self.icon = create_mac_icon(label, fill, text_c)
 
     def on_check_now(self, _):
         if self._timer:
@@ -353,6 +461,10 @@ class DeepSeekBalanceMacApp(rumps.App):
         
         notify_mac(title=title, message=msg)
 
+    def on_top_up(self, _):
+        import subprocess
+        subprocess.run(["open", "https://platform.deepseek.com/top_up"])
+
     def _do_check(self):
         # Try encrypted key first, then fall back to legacy plain-text
         api_key = decrypt_api_key(self.config.get("api_key_enc", ""), CONFIG_DIR).strip()
@@ -367,7 +479,20 @@ class DeepSeekBalanceMacApp(rumps.App):
                 self.balances = data["all_balances"]
                 self.error = None
                 self.last_check = datetime.now()
+                try:
+                    self.service_status = fetch_service_status()
+                except Exception:
+                    self.service_status = None
                 log("Mac balance check OK")
+                
+                ss = self.service_status
+                s_indicator = ss.get("indicator") if ss else None
+                for code, bal in data["all_balances"].items():
+                    save_balance_record(code, bal["total_balance"],
+                                        bal["topped_up_balance"],
+                                        bal["granted_balance"],
+                                        service_status=s_indicator)
+                log(f"Mac balance saved to DB ({len(data['all_balances'])} records)")
                 
                 b = self.get_preferred_balance()
                 if b and self.config.get("enable_alerts", True):
@@ -389,24 +514,64 @@ class DeepSeekBalanceMacApp(rumps.App):
         self._timer.daemon = True
         self._timer.start()
 
+    def _try_webview_settings(self):
+        """Try to open WebView-based settings. Returns True if successful."""
+        # Check if already running — bring to front by re-spawning
+        # If PID file exists, the process might still be alive
+        if _SETTINGS_PID.exists():
+            try:
+                pid = int(_SETTINGS_PID.read_text().strip())
+                # Check if process is alive (macOS: kill -0)
+                os.kill(pid, 0)
+                log(f"WebView settings already running (pid {pid})")
+                # Bring to front: use AppKit to avoid "System Events" permission prompt
+                if HAS_PYOBJC:
+                    from AppKit import NSRunningApplication
+                    app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+                    if app:
+                        app.activateWithOptions_(3)  # NSApplicationActivateAllWindows(1) | NSApplicationActivateIgnoringOtherApps(2)
+                else:
+                    subprocess.run(
+                        ["osascript", "-e",
+                         'tell app "System Events" to set frontmost of '
+                         '(first process whose unix id is ' + str(pid) + ') to true'],
+                        capture_output=True, timeout=5)
+                return True
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                # Stale PID file
+                _SETTINGS_PID.unlink(missing_ok=True)
+
+        # Launch WebView as subprocess
+        try:
+            me = sys.executable
+            if getattr(sys, "frozen", False):
+                args = [me, "--settings-webview"]
+            else:
+                args = [me, "-m", "src.webview.main"]
+            subprocess.Popen(args, start_new_session=True)
+            log("WebView settings launched as subprocess")
+            return True
+        except Exception as e:
+            log(f"Failed to launch WebView settings: {e}")
+            return False
+
+    def _watch_settings_sentinel(self):
+        """Background thread: poll sentinel file to reload config on save."""
+        while self._running:
+            if _SETTINGS_SENTINEL.exists():
+                try:
+                    _SETTINGS_SENTINEL.unlink()
+                    self.config = load_config()
+                    self._dirty_menu = True
+                    self.on_check_now(None)
+                    log("Settings changed via WebView — config reloaded")
+                except Exception as e:
+                    log(f"Sentinel handler error: {e}")
+            time.sleep(1)
+
     def on_settings(self, _):
-        import subprocess
-        # Pass --settings flag to the executable to avoid duplicate tray icons
-        if getattr(sys, 'frozen', False):
-            # In bundled app, sys.executable is the app binary itself.
-            cmd = [sys.executable, "--settings"]
-        else:
-            # In dev mode, we need to pass the script path
-            cmd = [sys.executable, sys.argv[0], "--settings"]
-        
-        log(f"Launching settings: {' '.join(cmd)}")
-        subprocess.Popen(cmd)
-        
-        # After settings process closes, reload config and refresh
-        self.config = load_config()
-        self.rebuild_menus()
-        self.on_check_now(None)
-        
+        self._try_webview_settings()
+    
     def on_test_notify(self, _):
         notify_mac(
             title=T("low_bal_title", self.lang),
@@ -415,14 +580,15 @@ class DeepSeekBalanceMacApp(rumps.App):
         )
 
     def on_quit(self, _):
+        self._running = False
         if self._timer:
             self._timer.cancel()
         rumps.quit_application()
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--settings":
-        from src.mac.settings import run_settings
-        run_settings()
+    if len(sys.argv) > 1 and sys.argv[1] == "--settings-webview":
+        from src.webview.main import main as webview_main
+        webview_main()
         sys.exit(0)
 
     log("DeepSeek Balance Monitor (Mac version) starting")
