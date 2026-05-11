@@ -391,8 +391,8 @@ def open_settings(app):
 
             app.config["api_key"] = key
             try:
-                from src.credential_store import store_credential
-                store_credential(key)
+                from src.secure_settings import store_api_key
+                store_api_key(key)
             except ImportError:
                 pass
 

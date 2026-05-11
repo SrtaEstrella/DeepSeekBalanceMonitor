@@ -132,8 +132,8 @@ DeepSeek 余额：                              ← 固定标题
 | `proxy_label` | HTTP 代理： | HTTP proxy: |
 | `proxy_hint` | 例如 http://127.0.0.1:7890，留空则不使用 | e.g. http://127.0.0.1:7890, leave blank to disable |
 
-## Changed Since v1.2 (待实现)
+## Changed Since v1.2
 
-- **API Key 跨平台统一存储**：将 API Key 存储从 Windows Credential Manager 改为 Windows/Linux 统一的 SQLite `secure_settings` 加密存储，解决 Linux 版无系统凭据管理器的问题
-- **config.json.api_key 只作迁移入口**：`load_config()` 中读取旧 `config.json` 的 `api_key` 仅用于首次迁移，迁移后必须清空文件中的明文字段
+- **API Key 跨平台统一存储**：SQLite `secure_settings` 加密存储（Fernet），跨 Windows/Linux/Mac 统一。`credential_store` 和 `config.json.api_key` 降级为迁移入口
+- **config.json.api_key 只作迁移入口**：`load_config()` → `_resolve_api_key()` 按 secure_settings → credential_store → config.json 优先级读取，迁移后 `save_config()` 自动清空明文字段
 - **代理文案调整**：`HTTP 代理` → `HTTP/HTTPS proxy`，与底层实现一致（ProxyHandler 同时覆盖 http 和 https）

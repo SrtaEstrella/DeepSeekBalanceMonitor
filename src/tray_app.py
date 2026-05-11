@@ -204,14 +204,15 @@ def on_show_balance(icon, item):
             daily_rate, hours_left, _curr = cr
             days = int(hours_left // 24)
             hrs = int(hours_left % 24)
-            if lang == "en":
-                lines.append(
-                    f"📊 Avg: {daily_rate:.2f}/day  |  Est. {days}d {hrs}h remaining"
-                )
+            if days > 0:
+                remaining = f"{days}d {hrs}h" if lang == "en" else f"{days} 天 {hrs} 小时"
+            elif hrs >= 1:
+                remaining = f"{hrs}h" if lang == "en" else f"{hrs} 小时"
             else:
-                lines.append(
-                    f"📊 日均消耗 {daily_rate:.2f}  |  预计可用 {days} 天 {hrs} 小时"
-                )
+                remaining = "< 1h" if lang == "en" else "不足 1 小时"
+            prefix = "Est." if lang == "en" else "预计可用"
+            lines.append(f"📊 Avg: {daily_rate:.2f}/day  |  {prefix} {remaining}" if lang == "en"
+                         else f"📊 日均消耗 {daily_rate:.2f}  |  {prefix} {remaining}")
 
     lines.append(f"📡 {status_line}")
     if last:
@@ -347,16 +348,18 @@ def _on_history(icon, item):
             daily_rate, hours_left, curr = cr
             days = int(hours_left // 24)
             hrs = int(hours_left % 24)
-            if lang == "en":
-                rate_var.set(
-                    f"Avg: {daily_rate:.2f} {curr}/day  |  "
-                    f"Est. {days}d {hrs}h remaining"
-                )
+            if days > 0:
+                remaining = f"{days}d {hrs}h" if lang == "en" else f"{days} 天 {hrs} 小时"
+            elif hrs >= 1:
+                remaining = f"{hrs}h" if lang == "en" else f"{hrs} 小时"
             else:
-                rate_var.set(
-                    f"日均消耗 {daily_rate:.2f} {curr}  |  "
-                    f"预计可用 {days} 天 {hrs} 小时"
-                )
+                remaining = "< 1h" if lang == "en" else "不足 1 小时"
+            prefix = "Est." if lang == "en" else "预计可用"
+            rate_var.set(
+                f"Avg: {daily_rate:.2f} {curr}/day  |  {prefix} {remaining}"
+                if lang == "en" else
+                f"日均消耗 {daily_rate:.2f} {curr}  |  {prefix} {remaining}"
+            )
         else:
             rate_var.set(
                 "Not enough data" if lang == "en" else "数据不足，无法计算消耗速率"

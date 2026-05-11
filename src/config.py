@@ -61,7 +61,7 @@ _T = {
         "error_no_key":     "未配置 API Key",
         "view_balance":     "📋 查看余额",
         "check_now":        "🔄 立即查询",
-        "top_up":           "充值",
+        "top_up":           "💰 充值",
         "history":          "📊 历史记录",
         "settings":         "⚙️ 设置…",
         "quit":             "❌ 退出",
@@ -128,7 +128,7 @@ _T = {
         "th_status":         "状态",
         "export_label":      "导出路径：",
         "export_browse":     "浏览",
-        "proxy_label":       "HTTP 代理：",
+        "proxy_label":       "HTTP/HTTPS 代理：",
         "proxy_hint":        "留空则不使用",
         "retention_hint":    "（1 ~ 3650 天）",
         "unsaved_changes":   "有未保存的更改。确定要放弃吗？",
@@ -142,7 +142,7 @@ _T = {
         "error_no_key":     "No API Key configured",
         "view_balance":     "📋 View Balance",
         "check_now":        "🔄 Check Now",
-        "top_up":           "Top Up",
+        "top_up":           "💰 Top Up",
         "history":          "📊 History",
         "settings":         "⚙️ Settings…",
         "quit":             "❌ Quit",
@@ -209,7 +209,7 @@ _T = {
         "th_status":         "Status",
         "export_label":      "Export path:",
         "export_browse":     "Browse",
-        "proxy_label":       "HTTP proxy:",
+        "proxy_label":       "HTTP/HTTPS proxy:",
         "proxy_hint":        "Leave blank to disable",
         "retention_hint":    "(1 ~ 3650 days)",
         "unsaved_changes":   "Unsaved changes will be lost. Continue?",
@@ -236,6 +236,31 @@ def log(msg: str):
         pass
 
 # ─── Config I/O ──────────────────────────────────────────────────
+def _resolve_api_key(cfg: dict):
+    """Resolve API key: secure_settings → credential_store → config.json (migration)."""
+    try:
+        from src.secure_settings import read_api_key
+        key = read_api_key()
+        if key:
+            cfg["api_key"] = key
+            return
+    except ImportError:
+        pass
+    try:
+        from src.credential_store import read_credential
+        key = read_credential()
+        if key:
+            cfg["api_key"] = key
+            # Migrate from credential_store to secure_settings
+            try:
+                from src.secure_settings import store_api_key
+                store_api_key(key)
+            except ImportError:
+                pass
+    except ImportError:
+        pass
+
+
 def load_config() -> dict:
     if CONFIG_FILE.exists():
         try:
@@ -245,33 +270,35 @@ def load_config() -> dict:
                 if "alert_mode" not in cfg or cfg["alert_mode"] == DEFAULT_CONFIG["alert_mode"]:
                     cfg["alert_mode"] = "always" if cfg["enable_alerts"] else "never"
                 del cfg["enable_alerts"]
-            try:
-                from src.credential_store import read_credential
-                key = read_credential()
-                if key:
-                    cfg["api_key"] = key
-            except ImportError:
-                pass
+            _resolve_api_key(cfg)
             return cfg
         except Exception as e:
             log(f"Failed to load config: {e}")
 
-    # No config file yet - still try credential store
     cfg = DEFAULT_CONFIG.copy()
+    _resolve_api_key(cfg)
+    return cfg
+
+def _has_secure_storage():
     try:
-        from src.credential_store import read_credential
-        key = read_credential()
-        if key:
-            cfg["api_key"] = key
+        from src.secure_settings import store_api_key
+        return True
     except ImportError:
         pass
-    return cfg
+    try:
+        from src.credential_store import store_credential
+        return True
+    except ImportError:
+        pass
+    return False
+
 
 def save_config(config: dict) -> None:
     try:
         safe = {**config}
         safe.pop("enable_alerts", None)
-        safe["api_key"] = ""  # keep credential manager as sole storage
+        if _has_secure_storage():
+            safe["api_key"] = ""
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(safe, f, indent=2, ensure_ascii=False)
