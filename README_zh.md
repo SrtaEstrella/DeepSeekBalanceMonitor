@@ -20,19 +20,14 @@
 - 余额通知和历史页显示消耗速率与预计可用时间。
 - 支持 HTTP 代理。
 - 余额详情通知使用 emoji 前缀和相对上次查询时间。
+- Demo 模式无需真实 Key 即可测试：Py-Win/Py-Mac 提供开发者面板，Rust 通过保存 `demo` 作为 API Key 触发。
+- API Key 加密存储：Py-Win 使用 Windows 凭据管理器，Rust 使用 SQLite `secure_settings`，Py-Mac 使用 Keychain。
 
-Rust v1.2：
+Rust 版本限定：
 
-- Rust Windows 和 Rust Linux 将 API Key 加密存入 SQLite `secure_settings`，旧版 `config.json` 明文 Key 会自动迁移并清空。
-- Rust 演示模式通过把 API Key 保存为 `demo` 触发，使用独立 `demo_mode_balance` 表，不请求真实 API。
-- Rust Linux 新增 `dsmon set-key` 和 `dsmon set <field> <value>`；daemon 每轮轮询都会重新读取配置，CLI 固定英文输出，安装脚本可提示输入 API Key。
-- Plasma 6 小组件新增透明液态玻璃桌面样式，显示余额、上次查询、服务状态、预计可用时间、刷新按钮和 emoji 状态文案。
-- Rainmeter 桌面小工具通过仅本地可访问的状态接口供给数据，并随 Release 提供 `.rmskin` 皮肤包；当前 Rust Windows 已支持该接口，Python Windows 后续可按同一契约接入。
-
-Python v1.2：
-
-- Demo 模式提供开发者面板，可在无真实 API Key 时测试状态。
-- Windows Credential Manager 加密保存 API Key。
+- Rust Linux：`dsmon set-key` 和 `dsmon set <field> <value>`；daemon 每轮轮询重新读取配置；CLI 固定英文输出。
+- Plasma 6 小组件：透明液态玻璃桌面样式，余额、上次查询、服务状态、预计可用时间、刷新按钮和 emoji 状态。
+- Rainmeter 桌面小工具：仅本地可访问的状态接口；`.rmskin` 发布打包。Rust Windows 已支持该接口；Python Windows 后续可按同一契约接入。
 
 ## 功能
 

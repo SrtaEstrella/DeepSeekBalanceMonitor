@@ -20,19 +20,14 @@ A Windows tray app and Linux CLI/Plasma widget that periodically query the DeepS
 - Consumption rate estimation in balance notifications and the history viewer.
 - HTTP proxy support for restricted network environments.
 - Balance detail notifications now use emoji-prefixed lines and relative last-check time.
+- Demo mode for testing without a real API key: developer tools panel on Py-Win/Py-Mac, `demo` API key trigger on Rust.
+- Encrypted API key storage: Windows Credential Manager on Py-Win, SQLite `secure_settings` on Rust, Keychain on Py-Mac.
 
-Rust v1.2:
+Rust-specific:
 
-- Rust Windows and Rust Linux store API keys encrypted in SQLite `secure_settings`; legacy plaintext `config.json` keys are migrated and removed.
-- Rust demo mode is enabled by saving `demo` as the API key and uses an isolated `demo_mode_balance` table instead of real API calls.
-- Rust Linux adds `dsmon set-key` and `dsmon set <field> <value>`; the daemon reloads configuration on each polling cycle, CLI output stays English-only, and the installer can prompt for an API key.
-- The Plasma 6 widget adds a transparent liquid-glass desktop view with balance, last check, service status, estimated availability, refresh control, and emoji status text.
-- Rainmeter desktop widget support uses a local-only status interface and release `.rmskin` skin package; Rust Windows currently provides the interface, and Python Windows can use the same contract later.
-
-Python v1.2:
-
-- Demo mode includes a developer tools panel for testing without a real API key.
-- Windows Credential Manager integration for encrypted API key storage.
+- Rust Linux: `dsmon set-key` and `dsmon set <field> <value>`; daemon reloads config on each poll cycle; CLI stays English-only.
+- Plasma 6 widget: transparent liquid-glass view with balance, last check, service status, estimated availability, refresh control, and emoji status text.
+- Rainmeter desktop widget: local-only status interface; `.rmskin` release packaging. Rust Windows provides the interface; Python Windows can adopt the same contract later.
 
 ## Features
 
