@@ -14,6 +14,10 @@ A Windows tray app and Linux CLI/Plasma widget that periodically query the DeepS
 
 ## Current Version Highlights
 
+- Rust 1.2.5 refreshes the Linux Plasma widget display model: balance, relative last check, API service status, and estimated availability now match the Rainmeter widget layout.
+- Plasma widget language changes now persist across Plasma restarts by syncing the widget `cfg_language` setting back to `dsmon`'s `ui_language`.
+- Linux releases now include both the full `.tar.gz` package and a standalone `.plasmoid` widget package for direct download.
+- Rust Windows and Rust Linux now read DeepSeek service status from the FlashDuty-backed status page after the old `status.deepseek.com/api/v2` API stopped working.
 - Custom icon styling with 5 preset colour themes, custom hex colours, and an icon stroke toggle.
 - History viewer with paginated balance records, an interactive trend chart, and consumption rate analysis.
 - CSV export with a configurable save path.
@@ -28,6 +32,7 @@ Rust Linux-specific:
 
 - Rust Linux: `dsmon set-key` and `dsmon set <field> <value>`; daemon reloads config on each poll cycle; CLI stays English-only.
 - Plasma 6 widget: transparent liquid-glass view with balance, last check, service status, estimated availability, refresh control, and emoji status text.
+- Plasma 6 widget display is intentionally compact: the main desktop widget shows the balance line, relative last-check time, DeepSeek API status, and estimated remaining time.
 
 ## Features
 
@@ -60,7 +65,27 @@ Rust Linux-specific:
 
 ### Direct Download
 
-Grab the latest files from [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases). Use `DeepSeekBalanceMonitor.exe` for the Python-packaged build, `deepseek-balance-monitor.exe` for the Rust Windows build, or `deepseek-balance-monitor-*-linux-x86_64.tar.gz` for Linux. Release builds do not require Python.
+Grab the latest files from [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases). Use `DeepSeekBalanceMonitor.exe` for the Python-packaged build, `deepseek-balance-monitor-*-windows-*.exe` for the Rust Windows build, `deepseek-balance-monitor-*-linux-x86_64.tar.gz` for the full Linux package, or `deepseek-balance-monitor-*-plasmoid.plasmoid` for the standalone Plasma widget. Release builds do not require Python.
+
+### Optional Plasma Widget (Linux)
+
+The Plasma widget is optional and requires KDE Plasma 6. It reads local status from `dsmon` and never receives your API key directly.
+
+1. Download `deepseek-balance-monitor-*-linux-x86_64.tar.gz` from [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases).
+2. Extract the archive and run the installer:
+
+   ```bash
+   tar -xzf deepseek-balance-monitor-*-linux-x86_64.tar.gz
+   cd deepseek-balance-monitor-*-linux-x86_64
+   sudo ./install.sh
+   systemctl --user enable --now dsmon.service
+   ```
+
+3. Add **DeepSeek Balance Monitor** from Plasma's widget picker.
+4. Open the widget settings, enter your DeepSeek API key or use `dsmon set-key`, then click **Save**.
+5. Use **Check** in the widget to refresh the balance manually.
+
+For widget-only installs, download `deepseek-balance-monitor-*-plasmoid.plasmoid` and install it with Plasma's widget installer. The full Linux tarball also contains the same widget under its `plasmoid/` directory.
 
 ### Optional Rainmeter Widget (Windows)
 
@@ -68,7 +93,7 @@ The Rainmeter desktop widget is optional. It reads local status from a running D
 
 1. Install Rainmeter from [rainmeter.net](https://www.rainmeter.net/).
 2. Run any Windows build (Python or Rust) — the local status interface starts automatically.
-3. Download `deepseek-balance-monitor-*-rainmeter.rmskin` from [Releases](https://github.com/SrtaEstrella/DeepSeekBalanceMonitor/releases).
+3. Download `deepseek-balance-monitor-*-rainmeter.rmskin` from [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases).
 4. Double-click the `.rmskin` file and install the skin.
 5. In Rainmeter, load `DeepSeekBalanceMonitor\DeepSeekBalanceMonitor.ini` (or `DeepSeekBalanceMonitor.en.ini` for English).
 

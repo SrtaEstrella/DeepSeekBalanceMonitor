@@ -2,6 +2,29 @@
 
 All notable changes to DeepSeek Balance Monitor are documented here.
 
+## Rust v1.2.5 (2026-05-12)
+
+### Added
+
+- Standalone Plasma widget release asset: `deepseek-balance-monitor-*-plasmoid.plasmoid`
+- Linux release tarballs now include the same Plasma widget package under `plasmoid/`
+- Linux release assets include `checksums.txt` for tarball verification
+
+### Changed
+
+- Plasma widget display now follows the Rainmeter layout: balance line, relative last-check time, API service status, and estimated remaining time
+- Plasma widget language settings now sync `cfg_language` back to `ui_language`, so English/Chinese selection survives Plasma restarts
+- Low-balance display colour now takes priority over API-degraded colour, matching Rainmeter accent rules
+- Rust Linux and Rust Windows service-status checks now use the FlashDuty-backed DeepSeek status page
+- Consumption estimates use topped-balance history over a 7-day window, with retention-period fallback when needed
+- Proxy settings now include an explicit enable toggle while preserving the proxy address when disabled
+
+### Fixed
+
+- Fixed Linux Plasma language changes appearing to reset after restarting `plasmashell`
+- Fixed removed DeepSeek status REST API usage in Rust ports
+- Fixed Windows settings title/footer behaviour to match the v1.2 settings design
+
 ## Python v1.2.2 (2026-05-12)
 
 ### Fixed
