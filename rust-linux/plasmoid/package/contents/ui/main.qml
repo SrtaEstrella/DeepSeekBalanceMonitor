@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.plasma.components as PlasmaComponents
 import org.kde.plasma.core as PlasmaCore
+import org.kde.plasma.extras as PlasmaExtras
 import org.kde.plasma.plasma5support as Plasma5Support
 import org.kde.plasma.plasmoid
 
@@ -29,14 +30,22 @@ PlasmoidItem {
     property bool serviceDegraded: false
     property bool serviceStatusChecked: false
     property bool apiAlertEnabled: true
+    property string iconTheme: "default"
+    property var iconColors: ({})
+    property bool iconStroke: false
+    property var consumptionRate: null
     readonly property string notificationIconPath: "/usr/share/icons/hicolor/256x256/apps/deepseek-balance-monitor.png"
     readonly property color warmGray: "#8a8078"
+    readonly property color glassTextColor: "#ffffff"
+    readonly property int balanceTextPointSize: 15
 
     Plasmoid.icon: !ok || !daemonRunning ? "dialog-warning" : "deepseek-balance-monitor"
     Plasmoid.title: tr("title")
+    Plasmoid.backgroundHints: PlasmaCore.Types.NoBackground
     toolTipMainText: tooltipText
-    preferredRepresentation: compactRepresentation
+    preferredRepresentation: desktopWidget ? fullRepresentation : compactRepresentation
 
+    readonly property bool desktopWidget: Plasmoid.formFactor === PlasmaCore.Types.Planar
     readonly property string compactLabel: daemonChecked && !daemonRunning ? "!" : (ok ? totalBalance : (checking ? "..." : "!"))
     readonly property string tooltipText: checking
         ? tr("checking")
@@ -53,9 +62,62 @@ PlasmoidItem {
     readonly property color statusColor: !configured || !ok || lowBalance || !daemonRunning
         ? Kirigami.Theme.negativeTextColor
         : (serviceDegraded ? warmGray : Kirigami.Theme.positiveTextColor)
+    readonly property string balanceNumberColor: iconFill
+    readonly property string iconFill: checking ? iconColor("nodata") : (daemonChecked && !daemonRunning ? iconColor("low") : (ok ? (serviceDegraded ? iconColor("degraded") : (lowBalance ? iconColor("low") : iconColor("ok"))) : iconColor(configured ? "low" : "nodata")))
+    readonly property color iconTextColor: textColor(iconFill)
 
     function runCommand(command) {
         executable.connectSource(command)
+    }
+
+    function themePalette(theme) {
+        var palettes = {
+            "default": { ok: "#3c6966", low: "#b9463c", degraded: "#78695a", nodata: "#69696e" },
+            "contrast": { ok: "#2d8074", low: "#d4342e", degraded: "#8b6914", nodata: "#555555" },
+            "bright": { ok: "#c8ebe6", low: "#f5d2cd", degraded: "#ebdccd", nodata: "#d7d7dc" },
+            "dark_mode": { ok: "#509b94", low: "#d7645a", degraded: "#9b8c73", nodata: "#7d7d82" },
+            "mono": { ok: "#555555", low: "#222222", degraded: "#777777", nodata: "#999999" }
+        }
+        return palettes[theme] || palettes["default"]
+    }
+
+    function customColor(key) {
+        var value = iconColors && iconColors[key] ? String(iconColors[key]) : ""
+        return /^[0-9a-fA-F]{6}$/.test(value) ? "#" + value : ""
+    }
+
+    function iconColor(key) {
+        if (iconTheme === "custom") {
+            var custom = customColor(key)
+            if (custom.length > 0) {
+                return custom
+            }
+        }
+        return themePalette(iconTheme)[key]
+    }
+
+    function textColor(hex) {
+        var value = String(hex).replace("#", "")
+        var r = parseInt(value.substring(0, 2), 16)
+        var g = parseInt(value.substring(2, 4), 16)
+        var b = parseInt(value.substring(4, 6), 16)
+        return (0.299 * r + 0.587 * g + 0.114 * b) > 170 ? "#000000" : "#ffffff"
+    }
+
+    function htmlEscape(value) {
+        return String(value)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+    }
+
+    function coloredNumber(value) {
+        var text = String(value)
+        if (!/^-?\d+(\.\d+)?$/.test(text)) {
+            return htmlEscape(text)
+        }
+        return "<span style=\"color:" + balanceNumberColor + "\">" + htmlEscape(text) + "</span>"
     }
 
     function systemLanguage() {
@@ -87,12 +149,12 @@ PlasmoidItem {
             queryError: "查询出错",
             notChecked: "尚未查询",
             serviceStatus: "DeepSeek API 服务状态：",
-            serviceNormal: "🟢 服务正常",
-            statusMinor: "🟡 轻微异常",
-            statusMajor: "🟠 严重异常",
-            statusCritical: "🔴 关键不可用",
-            statusMaintenance: "🔧 维护中",
-            statusUnknown: "⚪ 服务状态未知",
+            serviceNormal: "服务正常",
+            statusMinor: "轻微异常",
+            statusMajor: "严重异常",
+            statusCritical: "关键不可用",
+            statusMaintenance: "维护中",
+            statusUnknown: "服务状态未知",
             apiDegradedTitle: "⚠ DeepSeek API 服务异常",
             apiDegradedMsg: "检测到 API 服务状态异常：",
             apiRecoveredTitle: "✅ DeepSeek API 服务恢复",
@@ -107,7 +169,9 @@ PlasmoidItem {
             daemonNoConsoleError: "没有控制台错误输出。",
             balanceEmpty: "暂无余额数据，请等待或手动查询。",
             balanceErrorTitle: "余额查询失败",
-            daemonStopped: "dsmon 后台进程未运行，请启动 dsmon.service。"
+            daemonStopped: "dsmon 后台进程未运行，请启动 dsmon.service。",
+            dailyRate: "日均消耗",
+            estimated: "预计可用"
         }
         var en = {
             title: "DeepSeek Balance Monitor",
@@ -129,12 +193,12 @@ PlasmoidItem {
             queryError: "Query error",
             notChecked: "Not checked",
             serviceStatus: "DeepSeek API Status:",
-            serviceNormal: "🟢 All Systems Operational",
-            statusMinor: "🟡 Minor Outage",
-            statusMajor: "🟠 Major Outage",
-            statusCritical: "🔴 Critical Outage",
-            statusMaintenance: "🔧 Under Maintenance",
-            statusUnknown: "⚪ Status Unknown",
+            serviceNormal: "All Systems Operational",
+            statusMinor: "Minor Outage",
+            statusMajor: "Major Outage",
+            statusCritical: "Critical Outage",
+            statusMaintenance: "Under Maintenance",
+            statusUnknown: "Status Unknown",
             apiDegradedTitle: "⚠ DeepSeek API Degraded",
             apiDegradedMsg: "API service status has changed: ",
             apiRecoveredTitle: "✅ DeepSeek API Recovered",
@@ -149,7 +213,9 @@ PlasmoidItem {
             daemonNoConsoleError: "No console error output.",
             balanceEmpty: "No balance data yet. Please wait or check now.",
             balanceErrorTitle: "Balance check failed",
-            daemonStopped: "dsmon background process is not running. Start dsmon.service."
+            daemonStopped: "dsmon background process is not running. Start dsmon.service.",
+            dailyRate: "Avg",
+            estimated: "Est."
         }
         var table = language === "zh" ? zh : en
         return table[key] || key
@@ -204,7 +270,7 @@ PlasmoidItem {
 
     function notifyApiStatusChange(degraded) {
         var title = degraded ? tr("apiDegradedTitle") : tr("apiRecoveredTitle")
-        var message = degraded ? tr("apiDegradedMsg") + serviceStatusText() : tr("apiRecoveredMsg")
+        var message = (degraded ? tr("apiDegradedMsg") : tr("apiRecoveredMsg") + " ") + serviceStatusMarkup()
         runCommand("/usr/bin/notify-send --app-name " + shellQuote(tr("title"))
             + " --icon " + shellQuote(notificationIconPath)
             + " " + shellQuote(title)
@@ -237,6 +303,51 @@ PlasmoidItem {
         }
     }
 
+    function serviceStatusMarkup() {
+        return serviceStatusEmoji() + " " + htmlEscape(serviceStatusText())
+    }
+
+    function serviceStatusEmoji() {
+        switch (serviceStatus) {
+        case "none":
+            return "🟢"
+        case "minor":
+        case "maintenance":
+            return "🟡"
+        case "major":
+            return "🟠"
+        case "critical":
+            return "🔴"
+        default:
+            return "⚪"
+        }
+    }
+
+    function relativeLastCheck() {
+        if (!lastCheck || lastCheck === "Not checked" || lastCheck === tr("notChecked")) {
+            return tr("notChecked")
+        }
+        var parsed = Date.parse(lastCheck.replace(" ", "T"))
+        if (isNaN(parsed)) {
+            return lastCheck
+        }
+        var seconds = Math.max(0, Math.floor((Date.now() - parsed) / 1000))
+        if (seconds < 60) {
+            return language === "zh" ? "刚刚" : "just now"
+        }
+        var value = seconds < 3600 ? Math.floor(seconds / 60)
+            : seconds < 86400 ? Math.floor(seconds / 3600)
+            : Math.floor(seconds / 86400)
+        if (language === "zh") {
+            return value + " " + (seconds < 3600 ? "分钟" : seconds < 86400 ? "小时" : "天") + "前"
+        }
+        return value + " " + (seconds < 3600 ? "minutes" : seconds < 86400 ? "hours" : "days") + " ago"
+    }
+
+    function labelSeparator() {
+        return language === "zh" ? "：" : ": "
+    }
+
     function applyServiceStatus(status, degraded) {
         var changed = serviceStatusChecked && serviceStatus !== status
         serviceStatus = status
@@ -251,30 +362,50 @@ PlasmoidItem {
         return tr("balTitle")
     }
 
+    function estimatedAvailabilityText() {
+        if (!consumptionRate) {
+            return tr("estimated") + " --"
+        }
+        var hoursLeft = Number(consumptionRate.hours_left)
+        if (!isFinite(hoursLeft) || hoursLeft < 0) {
+            return tr("estimated") + " --"
+        }
+        var daysLeft = Math.floor(hoursLeft / 24)
+        var hoursRemainder = Math.floor(hoursLeft % 24)
+        return language === "zh"
+            ? tr("estimated") + " " + daysLeft + " 天 " + hoursRemainder + " 小时"
+            : tr("estimated") + " " + daysLeft + "d " + hoursRemainder + "h remaining"
+    }
+
     function balanceMessage() {
         var keys = Object.keys(balances)
         var lines = []
         if (ok && keys.length > 0) {
             var code = balances[totalCurrency] ? totalCurrency : keys[0]
             var item = balances[code]
-            lines.push(Number(item.total_balance).toFixed(2) + " " + code
+            lines.push("💰 " + Number(item.total_balance).toFixed(2) + " " + code
                 + (language === "zh" ? "（充值 " : " (Topped ")
                 + Number(item.topped_up_balance).toFixed(2)
                 + (language === "zh" ? "，赠送 " : ", Granted ")
                 + Number(item.granted_balance).toFixed(2)
                 + (language === "zh" ? "）" : ")"))
+            if (consumptionRate) {
+                lines.push("📊 " + (language === "zh"
+                    ? tr("dailyRate") + " " + Number(consumptionRate.daily_rate).toFixed(2) + " " + consumptionRate.currency + " | " + estimatedAvailabilityText()
+                    : tr("dailyRate") + ": " + Number(consumptionRate.daily_rate).toFixed(2) + " " + consumptionRate.currency + "/day | " + estimatedAvailabilityText()))
+            }
         }
+        lines.push("📡 " + tr("serviceStatus") + serviceStatusEmoji() + " " + serviceStatusText())
         if (!configured) {
-            lines.push(tr("queryError") + ": " + tr("noKey"))
+            lines.push("🕐 " + tr("queryError") + labelSeparator() + tr("noKey"))
         } else if (!ok || (daemonChecked && !daemonRunning)) {
-            lines.push(tr("queryError") + ": "
+            lines.push("🕐 " + tr("queryError") + labelSeparator()
                 + (daemonChecked && !daemonRunning ? tr("daemonStopped") : (errorText || tr("noOutput"))))
         } else if (lastCheck && lastCheck.length > 0) {
-            lines.push(tr("lastCheck") + ": " + lastCheck)
+            lines.push("🕐 " + tr("lastCheck") + labelSeparator() + relativeLastCheck())
         } else {
-            lines.push(tr("notChecked"))
+            lines.push("🕐 " + tr("notChecked"))
         }
-        lines.push(serviceStatusLine)
         return lines.join("\n")
     }
 
@@ -305,6 +436,10 @@ PlasmoidItem {
             intervalMinutes = status.interval_minutes || 10
             thresholdYuan = status.threshold_yuan || 1.0
             apiAlertEnabled = status.api_alert_enabled === undefined ? true : !!status.api_alert_enabled
+            iconTheme = status.theme || "default"
+            iconColors = status.icon_colors || ({})
+            iconStroke = !!status.icon_stroke
+            consumptionRate = status.consumption_rate || null
             var nextServiceStatus = status.service_status || "unknown"
             applyServiceStatus(nextServiceStatus,
                 status.service_degraded === undefined ? nextServiceStatus !== "none" : !!status.service_degraded)
@@ -407,9 +542,9 @@ PlasmoidItem {
             width: Math.min(parent.width, parent.height) * 0.86
             height: width
             radius: width * 0.18
-            color: root.checking
-                ? Kirigami.Theme.disabledTextColor
-                : root.statusColor
+            color: root.iconFill
+            border.width: root.iconStroke ? Math.max(1, width * 0.08) : 0
+            border.color: root.iconTextColor
 
             PlasmaComponents.Label {
                 anchors.centerIn: parent
@@ -417,7 +552,7 @@ PlasmoidItem {
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
                 text: root.compactLabel
-                color: "white"
+                color: root.iconTextColor
                 font.bold: true
                 font.pixelSize: Math.max(10, parent.width * (text.length <= 2 ? 0.42 : 0.32))
                 elide: Text.ElideRight
@@ -426,36 +561,138 @@ PlasmoidItem {
     }
 
     fullRepresentation: Item {
-        Layout.minimumWidth: Kirigami.Units.gridUnit * 18
-        Layout.minimumHeight: Kirigami.Units.gridUnit * 14
-        Layout.preferredWidth: Kirigami.Units.gridUnit * 22
-        Layout.preferredHeight: Kirigami.Units.gridUnit * 18
+        Layout.minimumWidth: Kirigami.Units.gridUnit * 15
+        Layout.maximumWidth: Kirigami.Units.gridUnit * 18
+        Layout.minimumHeight: contentColumn.implicitHeight + Kirigami.Units.largeSpacing * 1.3
+        Layout.preferredWidth: Kirigami.Units.gridUnit * 18
+        Layout.preferredHeight: contentColumn.implicitHeight + Kirigami.Units.largeSpacing * 1.3
+        Layout.maximumHeight: contentColumn.implicitHeight + Kirigami.Units.largeSpacing * 1.3
+
+        Rectangle {
+            id: glassCard
+            anchors.fill: parent
+            radius: Kirigami.Units.gridUnit
+            color: "transparent"
+            clip: true
+            border.color: Qt.rgba(1, 1, 1, root.desktopWidget ? 0.42 : 0.28)
+            border.width: 1
+
+            Rectangle {
+                width: parent.width * 0.66
+                height: width
+                x: -width * 0.22
+                y: -height * 0.28
+                radius: width / 2
+                color: root.iconFill
+                opacity: root.desktopWidget ? 0.16 : 0.10
+            }
+
+            Rectangle {
+                width: parent.width * 0.48
+                height: width
+                x: parent.width - width * 0.62
+                y: parent.height - height * 0.46
+                radius: width / 2
+                color: Kirigami.Theme.highlightColor
+                opacity: root.desktopWidget ? 0.12 : 0.08
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                radius: parent.radius
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, root.desktopWidget ? 0.18 : 0.12) }
+                    GradientStop { position: 0.45; color: Qt.rgba(0, 0, 0, root.desktopWidget ? 0.16 : 0.18) }
+                    GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, root.desktopWidget ? 0.28 : 0.24) }
+                }
+            }
+
+            Rectangle {
+                anchors {
+                    left: parent.left
+                    right: parent.right
+                    top: parent.top
+                    margins: Kirigami.Units.largeSpacing
+                }
+                height: 1
+                radius: 1
+                color: Qt.rgba(1, 1, 1, 0.42)
+            }
+        }
 
         ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: Kirigami.Units.largeSpacing
+            id: contentColumn
+            anchors {
+                left: glassCard.left
+                right: glassCard.right
+                top: glassCard.top
+                margins: Kirigami.Units.largeSpacing * 0.65
+            }
             spacing: Kirigami.Units.smallSpacing
 
             RowLayout {
                 Layout.fillWidth: true
-                PlasmaComponents.Label {
+                spacing: Kirigami.Units.smallSpacing
+
+                Rectangle {
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 2.6
+                    Layout.preferredHeight: Kirigami.Units.gridUnit * 2.6
+                    radius: width / 2
+                    color: root.iconFill
+                    border.color: root.iconTextColor
+                    border.width: root.iconStroke ? 2 : 0
+
+                    Image {
+                        anchors.centerIn: parent
+                        width: parent.width * 0.72
+                        height: width
+                        source: "../images/deepseek-balance-monitor.png"
+                        fillMode: Image.PreserveAspectFit
+                    }
+                }
+
+                PlasmaExtras.ShadowedLabel {
                     Layout.fillWidth: true
-                    text: tr("title")
+                    text: "💰 " + root.coloredNumber(root.totalBalance) + " " + root.htmlEscape(root.totalCurrency)
+                    textFormat: Text.RichText
+                    color: root.glassTextColor
                     font.bold: true
-                    font.pointSize: 13
+                    font.pointSize: root.balanceTextPointSize
+                    elide: Text.ElideRight
                 }
                 PlasmaComponents.Button {
+                    id: refreshButton
+                    Layout.preferredWidth: Kirigami.Units.gridUnit * 3.8
+                    Layout.preferredHeight: Kirigami.Units.gridUnit * 1.9
                     text: tr("check")
+                    icon.name: "view-refresh"
                     enabled: !root.checking
                     onClicked: root.refresh()
+                    background: Rectangle {
+                        radius: height / 2
+                        color: refreshButton.pressed ? Qt.rgba(1, 1, 1, 0.26) : Qt.rgba(1, 1, 1, 0.14)
+                        border.color: Qt.rgba(1, 1, 1, 0.46)
+                        border.width: 1
+                    }
+                    contentItem: PlasmaExtras.ShadowedLabel {
+                        text: refreshButton.text
+                        color: root.glassTextColor
+                        font.bold: true
+                        font.pointSize: 10
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
                 }
             }
 
-            PlasmaComponents.Label {
+            PlasmaExtras.ShadowedLabel {
                 Layout.fillWidth: true
                 text: root.statusLine
-                color: root.statusColor
+                color: root.glassTextColor
+                font.pointSize: 11
                 wrapMode: Text.WordWrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
             }
 
             GridLayout {
@@ -464,42 +701,47 @@ PlasmoidItem {
                 rowSpacing: Kirigami.Units.smallSpacing
                 columnSpacing: Kirigami.Units.largeSpacing
 
-                PlasmaComponents.Label { text: tr("queryInterval") }
-                PlasmaComponents.Label { text: root.intervalMinutes + " " + tr("minutes") }
-                PlasmaComponents.Label { text: tr("balanceThreshold") }
-                PlasmaComponents.Label { text: Number(root.thresholdYuan).toFixed(2) + " " + root.totalCurrency }
-                PlasmaComponents.Label { text: tr("lastCheck") }
-                PlasmaComponents.Label { text: root.lastCheck }
-                PlasmaComponents.Label { text: tr("totalBalance") }
-                PlasmaComponents.Label {
-                    text: root.totalBalance + " " + root.totalCurrency
-                    color: root.statusColor
-                    font.bold: true
+                PlasmaExtras.ShadowedLabel {
+                    text: "🕐 " + tr("lastCheck")
+                    color: root.glassTextColor
+                    font.pointSize: 10
                 }
-            }
-
-            PlasmaComponents.Label {
-                text: tr("balances")
-                font.bold: true
-                visible: Object.keys(root.balances).length > 0
-            }
-
-            Repeater {
-                model: Object.keys(root.balances)
-                delegate: PlasmaComponents.Label {
+                PlasmaExtras.ShadowedLabel {
                     Layout.fillWidth: true
-                    text: {
-                        var item = root.balances[modelData]
-                        return modelData + ": " + tr("totalBalance").toLowerCase() + " "
-                            + Number(item.total_balance).toFixed(2)
-                            + " (" + tr("toppedUp") + " " + Number(item.topped_up_balance).toFixed(2)
-                            + ", " + tr("granted") + " " + Number(item.granted_balance).toFixed(2) + ")"
+                    text: root.lastCheck
+                    color: root.glassTextColor
+                    font.pointSize: 10
+                    elide: Text.ElideRight
+                }
+                PlasmaExtras.ShadowedLabel {
+                    text: "📡 " + tr("serviceStatus")
+                    color: root.glassTextColor
+                    font.pointSize: 10
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
+
+                    PlasmaExtras.ShadowedLabel {
+                        Layout.fillWidth: true
+                        text: root.serviceStatusEmoji() + " " + root.serviceStatusText()
+                        color: root.glassTextColor
+                        font.pointSize: 10
+                        elide: Text.ElideRight
                     }
-                    wrapMode: Text.WordWrap
                 }
             }
 
-            Item { Layout.fillHeight: true }
+            PlasmaExtras.ShadowedLabel {
+                Layout.fillWidth: true
+                text: "📊 " + root.estimatedAvailabilityText()
+                color: root.glassTextColor
+                font.bold: true
+                font.pointSize: root.balanceTextPointSize
+                wrapMode: Text.WordWrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
+            }
         }
     }
 }

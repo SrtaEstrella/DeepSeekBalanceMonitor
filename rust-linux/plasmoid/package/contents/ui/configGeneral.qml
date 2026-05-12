@@ -8,10 +8,16 @@ import org.kde.plasma.plasma5support as Plasma5Support
 KCM.SimpleKCM {
     id: page
 
-    property alias cfg_language: languageCombo.currentValue
+    property string cfg_language: systemLanguage()
     property string cfg_languageDefault: systemLanguage()
+    property bool cfg_expanding: false
+    property int cfg_length: 0
     property string statusText: ""
     property bool busy: false
+    property bool hasStoredApiKey: false
+    property string loadedApiKey: ""
+    property bool savingBatch: false
+    property var saveCommands: []
     readonly property string uiLanguage: languageCombo.currentValue || systemLanguage()
 
     function shellQuote(value) {
@@ -20,6 +26,25 @@ KCM.SimpleKCM {
 
     function runCommand(command) {
         executable.connectSource(command)
+    }
+
+    function queueSetCommand(field, values) {
+        var command = "/usr/local/bin/dsmon set " + shellQuote(field)
+        for (var index = 0; index < values.length; index++) {
+            command += " " + shellQuote(values[index])
+        }
+        saveCommands.push(command)
+    }
+
+    function runNextSaveCommand() {
+        if (saveCommands.length === 0) {
+            savingBatch = false
+            busy = false
+            statusText = tr("saved")
+            loadConfig()
+            return
+        }
+        runCommand(saveCommands.shift())
     }
 
     function systemLanguage() {
@@ -41,7 +66,9 @@ KCM.SimpleKCM {
             thresholdRequired: "余额预警线不能为空。",
             loadFailed: "加载配置失败：",
             apiKey: "DeepSeek API Key:",
-            showApiKey: "显示 API Key",
+            apiKeyStored: "********",
+            apiKeyUpdateHint: "API Key 已加密保存。修改真实 Key 时请在终端运行 dsmon set-key；如需演示模式，可直接输入 demo 后保存。",
+            showApiKey: "API Key 已隐藏",
             interval: "查询间隔：",
             minutes: "分钟",
             threshold: "余额预警线：",
@@ -54,6 +81,20 @@ KCM.SimpleKCM {
             alertOnce: "仅提醒一次",
             apiAlert: "API 服务状态变化提醒",
             logRetention: "日志和记录保留天数：",
+            exportPath: "数据导出路径：",
+            proxy: "HTTP/HTTPS 代理：",
+            theme: "图标主题：",
+            themeDefault: "默认",
+            themeContrast: "高对比",
+            themeBright: "明亮",
+            themeDarkMode: "暗色模式",
+            themeMono: "纯灰度",
+            themeCustom: "自定义",
+            iconStroke: "图标描边",
+            colorOk: "正常色",
+            colorLow: "低余额色",
+            colorDegraded: "服务异常色",
+            colorNoData: "无数据色",
             days: "天",
             save: "保存"
         }
@@ -67,7 +108,9 @@ KCM.SimpleKCM {
             thresholdRequired: "Balance threshold is required.",
             loadFailed: "Failed to load config: ",
             apiKey: "DeepSeek API Key:",
-            showApiKey: "Show API key",
+            apiKeyStored: "********",
+            apiKeyUpdateHint: "API key is stored encrypted. To update a real key, run dsmon set-key in a terminal. For demo mode, enter demo here and save.",
+            showApiKey: "API key hidden",
             interval: "Check interval:",
             minutes: "minutes",
             threshold: "Low balance threshold:",
@@ -80,6 +123,20 @@ KCM.SimpleKCM {
             alertOnce: "Once",
             apiAlert: "API service status alerts",
             logRetention: "Log & record retention (days):",
+            exportPath: "Export path:",
+            proxy: "HTTP/HTTPS proxy:",
+            theme: "Icon theme:",
+            themeDefault: "Default",
+            themeContrast: "High Contrast",
+            themeBright: "Bright",
+            themeDarkMode: "Dark Mode",
+            themeMono: "Monochrome",
+            themeCustom: "Custom",
+            iconStroke: "Icon stroke",
+            colorOk: "OK color",
+            colorLow: "Low color",
+            colorDegraded: "Degraded color",
+            colorNoData: "No data color",
             days: "days",
             save: "Save"
         }
@@ -94,7 +151,7 @@ KCM.SimpleKCM {
     }
 
     function saveConfig() {
-        if (apiKeyField.text.trim().length === 0) {
+        if (apiKeyField.text.trim().length === 0 && !hasStoredApiKey) {
             statusText = tr("apiKeyRequired")
             return
         }
@@ -103,22 +160,51 @@ KCM.SimpleKCM {
             statusText = tr("thresholdRequired")
             return
         }
+        var apiKeyArg = ""
+        if (apiKeyField.text.trim() !== loadedApiKey.trim()) {
+            if (apiKeyField.text.trim().toLowerCase() === "demo") {
+                apiKeyArg = "demo"
+            } else {
+                statusText = tr("apiKeyUpdateHint")
+                busy = false
+                return
+            }
+        }
         busy = true
         statusText = tr("saving")
-        runCommand("/usr/local/bin/dsmon set-config "
-            + shellQuote(apiKeyField.text)
-            + " " + intervalSpin.value
-            + " " + shellQuote(threshold)
-            + " " + shellQuote(languageCombo.currentValue)
-            + " " + (autoStartCheck.checked ? "true" : "false")
-            + " " + shellQuote(alertModeCombo.currentValue)
-            + " " + (apiAlertCheck.checked ? "true" : "false")
-            + " " + logRetentionSpin.value)
+        saveCommands = []
+        if (apiKeyArg === "demo") {
+            saveCommands.push("/usr/local/bin/dsmon set-key " + shellQuote("demo"))
+        }
+        queueSetCommand("interval", [String(intervalSpin.value)])
+        queueSetCommand("threshold", [threshold])
+        queueSetCommand("ui-language", [languageCombo.currentValue])
+        queueSetCommand("auto-start", [autoStartCheck.checked ? "true" : "false"])
+        queueSetCommand("alert-mode", [alertModeCombo.currentValue])
+        queueSetCommand("api-alert-enabled", [apiAlertCheck.checked ? "true" : "false"])
+        queueSetCommand("retention-days", [String(logRetentionSpin.value)])
+        queueSetCommand("export-path", [exportPathField.text.trim()])
+        queueSetCommand("http-proxy", [proxyField.text.trim()])
+        queueSetCommand("theme", [themeCombo.currentValue])
+        queueSetCommand("icon-stroke", [iconStrokeCheck.checked ? "true" : "false"])
+        if (themeCombo.currentValue === "custom") {
+            queueSetCommand("icon-colors", [
+                okColorField.text.trim(),
+                lowColorField.text.trim(),
+                degradedColorField.text.trim(),
+                noDataColorField.text.trim()
+            ])
+        }
+        savingBatch = true
+        runNextSaveCommand()
     }
 
     function applyConfig(stdout) {
         var config = JSON.parse(stdout)
-        apiKeyField.text = config.api_key || ""
+        hasStoredApiKey = !!config.has_key || (config.api_key || "").length > 0 || config.api_key === "masked"
+        loadedApiKey = hasStoredApiKey ? tr("apiKeyStored") : ""
+        apiKeyField.text = loadedApiKey
+        apiKeyField.placeholderText = hasStoredApiKey ? tr("apiKeyStored") : "dsmon set-key"
         intervalSpin.value = config.interval_minutes || 10
         thresholdField.text = Number(config.threshold_yuan === undefined ? 1.0 : config.threshold_yuan).toFixed(2)
         autoStartCheck.checked = !!config.auto_start
@@ -126,6 +212,16 @@ KCM.SimpleKCM {
         alertModeCombo.currentIndex = alertIndex >= 0 ? alertIndex : 0
         apiAlertCheck.checked = config.api_alert_enabled === undefined ? true : !!config.api_alert_enabled
         logRetentionSpin.value = config.retention_days || 30
+        exportPathField.text = config.export_path || ""
+        proxyField.text = config.http_proxy || ""
+        var themeIndex = themeCombo.indexOfValue(config.theme || "default")
+        themeCombo.currentIndex = themeIndex >= 0 ? themeIndex : 0
+        iconStrokeCheck.checked = !!config.icon_stroke
+        var colors = config.icon_colors || {}
+        okColorField.text = colors.ok || "3c6966"
+        lowColorField.text = colors.low || "b9463c"
+        degradedColorField.text = colors.degraded || "78695a"
+        noDataColorField.text = colors.nodata || "69696e"
         var selectedLanguage = config.ui_language === "zh" || config.ui_language === "en" ? config.ui_language : systemLanguage()
         var index = languageCombo.indexOfValue(selectedLanguage)
         languageCombo.currentIndex = index >= 0 ? index : 0
@@ -145,19 +241,23 @@ KCM.SimpleKCM {
         engine: "executable"
         connectedSources: []
         onNewData: function(sourceName, data) {
-            busy = false
             var stdout = data["stdout"] || ""
             var stderr = data["stderr"] || ""
             if (String(sourceName).indexOf("config-json") !== -1) {
+                busy = false
                 try {
                     applyConfig(stdout)
                 } catch (error) {
                     statusText = tr("loadFailed") + error
                 }
-            } else if (String(sourceName).indexOf("set-config") !== -1) {
-                statusText = stderr.trim().length > 0 ? tr("saveFailed") + stderr.trim() : tr("saved")
-                if (stderr.trim().length === 0) {
-                    loadConfig()
+            } else if (savingBatch) {
+                if (stderr.trim().length > 0) {
+                    saveCommands = []
+                    savingBatch = false
+                    busy = false
+                    statusText = tr("saveFailed") + stderr.trim()
+                } else {
+                    runNextSaveCommand()
                 }
             }
             disconnectSource(sourceName)
@@ -169,12 +269,19 @@ KCM.SimpleKCM {
             id: apiKeyField
             Kirigami.FormData.label: tr("apiKey")
             Layout.fillWidth: true
-            echoMode: showKeyCheck.checked ? TextInput.Normal : TextInput.Password
+            echoMode: TextInput.Password
         }
 
         QtControls.CheckBox {
             id: showKeyCheck
             text: tr("showApiKey")
+            visible: false
+        }
+
+        QtControls.Label {
+            Layout.fillWidth: true
+            text: tr("apiKeyUpdateHint")
+            wrapMode: Text.WordWrap
         }
 
         QtControls.SpinBox {
@@ -240,6 +347,68 @@ KCM.SimpleKCM {
             editable: true
             textFromValue: function(value) { return value + " " + tr("days") }
             valueFromText: function(text) { return parseInt(text) || 30 }
+        }
+
+        QtControls.TextField {
+            id: exportPathField
+            Kirigami.FormData.label: tr("exportPath")
+            Layout.fillWidth: true
+            placeholderText: "$HOME"
+        }
+
+        QtControls.TextField {
+            id: proxyField
+            Kirigami.FormData.label: tr("proxy")
+            Layout.fillWidth: true
+            placeholderText: "http://127.0.0.1:7890"
+        }
+
+        QtControls.ComboBox {
+            id: themeCombo
+            Kirigami.FormData.label: tr("theme")
+            textRole: "text"
+            valueRole: "value"
+            model: [
+                { text: tr("themeDefault"), value: "default" },
+                { text: tr("themeContrast"), value: "contrast" },
+                { text: tr("themeBright"), value: "bright" },
+                { text: tr("themeDarkMode"), value: "dark_mode" },
+                { text: tr("themeMono"), value: "mono" },
+                { text: tr("themeCustom"), value: "custom" }
+            ]
+        }
+
+        QtControls.CheckBox {
+            id: iconStrokeCheck
+            text: tr("iconStroke")
+        }
+
+        QtControls.TextField {
+            id: okColorField
+            Kirigami.FormData.label: tr("colorOk")
+            Layout.fillWidth: true
+            placeholderText: "3c6966"
+        }
+
+        QtControls.TextField {
+            id: lowColorField
+            Kirigami.FormData.label: tr("colorLow")
+            Layout.fillWidth: true
+            placeholderText: "b9463c"
+        }
+
+        QtControls.TextField {
+            id: degradedColorField
+            Kirigami.FormData.label: tr("colorDegraded")
+            Layout.fillWidth: true
+            placeholderText: "78695a"
+        }
+
+        QtControls.TextField {
+            id: noDataColorField
+            Kirigami.FormData.label: tr("colorNoData")
+            Layout.fillWidth: true
+            placeholderText: "69696e"
         }
 
         QtControls.Button {

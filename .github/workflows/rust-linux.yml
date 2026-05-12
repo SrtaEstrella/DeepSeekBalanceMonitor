@@ -70,7 +70,7 @@ jobs:
           package="deepseek-balance-monitor-${version}-linux-x86_64"
           mkdir -p "target/package/${package}"
           cp target/release/dsmon "target/package/${package}/"
-          cp package/install.sh package/dsmon.service "target/package/${package}/"
+          cp package/install.sh package/uninstall.sh package/dsmon.service "target/package/${package}/"
           cp -R plasmoid/package "target/package/${package}/plasmoid"
           tar -czf "target/package/${package}.tar.gz" -C target/package "${package}"
 
@@ -95,5 +95,6 @@ jobs:
             ## Rust builds
             - Windows: native x86_64 and i686 executables.
             - Linux: x86_64 CLI daemon package with systemd user service and KDE Plasma widget.
+            - Rainmeter: Windows desktop widget skin package.
           generate_release_notes: true
           overwrite_files: true

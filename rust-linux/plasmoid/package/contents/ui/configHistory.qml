@@ -16,6 +16,10 @@ KCM.SimpleKCM {
     property var currencyValues: ["all"]
     property var currencyLabels: [tr("all")]
     property string pageLanguage: systemLanguage()
+    property string cfg_language: pageLanguage
+    property string cfg_languageDefault: systemLanguage()
+    property bool cfg_expanding: false
+    property int cfg_length: 0
     readonly property string uiLanguage: pageLanguage
 
     function systemLanguage() {
@@ -48,6 +52,9 @@ KCM.SimpleKCM {
             trend: "趋势",
             change: "变化",
             average: "平均",
+            dailyRate: "日均消耗",
+            estimated: "预计可用",
+            notEnoughData: "数据不足，无法计算消耗速率",
             xAxis: "时间",
             yAxis: "总余额"
         }
@@ -72,6 +79,9 @@ KCM.SimpleKCM {
             trend: "Trend",
             change: "Change",
             average: "Average",
+            dailyRate: "Avg",
+            estimated: "Est.",
+            notEnoughData: "Not enough data to estimate consumption",
             xAxis: "Time",
             yAxis: "Total"
         }
@@ -143,8 +153,21 @@ KCM.SimpleKCM {
                 + tr("average") + " " + Number(item.avg_total).toFixed(2) + " | "
                 + tr("change") + " " + Number(item.change_total).toFixed(2))
         }
+        if (payload.consumption_rate) {
+            var rate = payload.consumption_rate
+            var hoursLeft = Number(rate.hours_left)
+            var daysLeft = Math.floor(hoursLeft / 24)
+            var hoursRemainder = Math.floor(hoursLeft % 24)
+            lines.push(tr("dailyRate") + " " + Number(rate.daily_rate).toFixed(2) + " " + rate.currency
+                + (uiLanguage === "zh" ? " | " + tr("estimated") + " " + daysLeft + " 天 " + hoursRemainder + " 小时"
+                    : "/day | " + tr("estimated") + " " + daysLeft + "d " + hoursRemainder + "h remaining"))
+        } else {
+            lines.push(tr("notEnoughData"))
+        }
         summaryText = lines.join("\n")
     }
+
+    function repaintChart() {}
 
     Component.onCompleted: loadConfig()
 
@@ -167,7 +190,7 @@ KCM.SimpleKCM {
                 return
             }
             busy = false
-            if (stderr.trim().length > 0) {
+            if (stderr.trim().length > 0 && stdout.trim().length === 0) {
                 statusText = tr("loadFailed") + stderr.trim()
             } else {
                 try {
@@ -175,8 +198,7 @@ KCM.SimpleKCM {
                     records = payload.records || []
                     updateCurrencyOptions(payload.currencies || [])
                     updateSummary(payload)
-                    chart.requestPaint()
-                    statusText = tr("loaded")
+                    statusText = stderr.trim().length > 0 ? stderr.trim() : tr("loaded")
                 } catch (error) {
                     statusText = tr("loadFailed") + error
                 }
@@ -213,7 +235,7 @@ KCM.SimpleKCM {
                 id: daysField
                 text: "30"
                 Layout.preferredWidth: Kirigami.Units.gridUnit * 4
-                onEditingFinished: loadHistory()
+                onAccepted: loadHistory()
             }
             QtControls.Label {
                 text: tr("currency")
@@ -242,68 +264,206 @@ KCM.SimpleKCM {
             wrapMode: Text.WordWrap
         }
 
-        Canvas {
-            id: chart
+        QtControls.Control {
+            id: chartFrame
             Kirigami.FormData.label: tr("chart")
             Layout.fillWidth: true
-            Layout.preferredHeight: Kirigami.Units.gridUnit * 14
-            onPaint: {
-                var ctx = getContext("2d")
-                ctx.clearRect(0, 0, width, height)
-                ctx.fillStyle = Kirigami.Theme.backgroundColor
-                ctx.fillRect(0, 0, width, height)
-                if (page.records.length === 0) {
-                    return
+            implicitWidth: Kirigami.Units.gridUnit * 30
+            implicitHeight: Kirigami.Units.gridUnit * 14
+            clip: true
+            padding: 0
+
+            property var points: page.records.slice(Math.max(0, page.records.length - 80))
+            readonly property bool hasPoints: points.length > 0
+            readonly property real plotLeft: 64
+            readonly property real plotRight: Math.max(plotLeft + 1, width - 16)
+            readonly property real plotTop: 12
+            readonly property real plotBottom: Math.max(plotTop + 1, height - 42)
+            readonly property real plotWidth: Math.max(1, plotRight - plotLeft)
+            readonly property real plotHeight: Math.max(1, plotBottom - plotTop)
+            readonly property real minValue: hasPoints ? minTotal() : 0
+            readonly property real maxValue: hasPoints ? maxTotal() : 1
+            readonly property real visualMinValue: hasPoints && Math.abs(maxValue - minValue) < 0.01 ? minValue - 0.01 : minValue
+            readonly property real visualMaxValue: hasPoints && Math.abs(maxValue - minValue) < 0.01 ? maxValue + 0.01 : maxValue
+            readonly property real span: Math.max(0.01, visualMaxValue - visualMinValue)
+            readonly property real barWidth: Math.max(2, Math.min(12, plotWidth / Math.max(1, points.length) * 0.65))
+
+            function minTotal() {
+                var value = Number(points[0].total)
+                for (var i = 1; i < points.length; i++) {
+                    value = Math.min(value, Number(points[i].total))
                 }
-                var points = page.records.slice(Math.max(0, page.records.length - 80))
-                var minValue = points[0].total
-                var maxValue = points[0].total
-                for (var i = 0; i < points.length; i++) {
-                    minValue = Math.min(minValue, points[i].total)
-                    maxValue = Math.max(maxValue, points[i].total)
+                return value
+            }
+
+            function maxTotal() {
+                var value = Number(points[0].total)
+                for (var i = 1; i < points.length; i++) {
+                    value = Math.max(value, Number(points[i].total))
                 }
-                var span = Math.max(0.01, maxValue - minValue)
-                var left = 64
-                var right = width - 16
-                var top = 12
-                var bottom = height - 42
-                var plotWidth = Math.max(1, right - left)
-                var plotHeight = Math.max(1, bottom - top)
-                ctx.strokeStyle = Kirigami.Theme.disabledTextColor
-                ctx.lineWidth = 1
-                ctx.beginPath()
-                ctx.moveTo(left, top)
-                ctx.lineTo(left, bottom)
-                ctx.lineTo(right, bottom)
-                ctx.stroke()
-                ctx.fillStyle = Kirigami.Theme.textColor
-                ctx.font = "10px sans-serif"
-                var midValue = minValue + span / 2
-                var labels = [
-                    { y: top + 4, text: maxValue.toFixed(2) },
-                    { y: top + plotHeight / 2 + 4, text: midValue.toFixed(2) },
-                    { y: bottom + 4, text: minValue.toFixed(2) }
-                ]
-                for (var labelIndex = 0; labelIndex < labels.length; labelIndex++) {
-                    ctx.fillText(labels[labelIndex].text, 4, labels[labelIndex].y)
+                return value
+            }
+
+            function xForIndex(index) {
+                return points.length === 1 ? plotLeft + plotWidth / 2 : plotLeft + index * plotWidth / (points.length - 1)
+            }
+
+            function yForTotal(total) {
+                return plotBottom - ((Number(total) - visualMinValue) / span) * plotHeight
+            }
+
+            function yLabel(index) {
+                if (index === 0) {
+                    return visualMaxValue.toFixed(2)
                 }
-                ctx.fillText(tr("yAxis"), 4, top + 16)
-                ctx.fillText(points[0].timestamp.substring(5, 16), left, height - 18)
-                ctx.fillText(points[points.length - 1].timestamp.substring(5, 16), Math.max(left, right - 80), height - 18)
-                ctx.fillText(tr("xAxis"), Math.max(left, right - 40), height - 4)
-                ctx.strokeStyle = Kirigami.Theme.highlightColor
-                ctx.lineWidth = 2
-                ctx.beginPath()
-                for (var j = 0; j < points.length; j++) {
-                    var x = points.length === 1 ? left + plotWidth / 2 : left + j * plotWidth / (points.length - 1)
-                    var y = bottom - ((points[j].total - minValue) / span) * plotHeight
-                    if (j === 0) {
-                        ctx.moveTo(x, y)
-                    } else {
-                        ctx.lineTo(x, y)
+                if (index === 1) {
+                    return (visualMinValue + span / 2).toFixed(2)
+                }
+                return visualMinValue.toFixed(2)
+            }
+
+            function yLabelY(index) {
+                if (index === 0) {
+                    return plotTop - 2
+                }
+                if (index === 1) {
+                    return plotTop + plotHeight / 2 - 7
+                }
+                return plotBottom - 12
+            }
+
+            function dateLabel(timestamp) {
+                var text = String(timestamp || "")
+                return text.length >= 16 ? text.substring(5, 16) : text
+            }
+
+            background: Rectangle {
+                color: Kirigami.Theme.backgroundColor
+                border.color: Kirigami.Theme.disabledTextColor
+                border.width: 1
+                opacity: 0.28
+            }
+
+            contentItem: Item {
+                clip: true
+
+                Rectangle {
+                    x: chartFrame.plotLeft
+                    y: chartFrame.plotTop
+                    width: 1
+                    height: chartFrame.plotHeight
+                    color: Kirigami.Theme.disabledTextColor
+                }
+
+                Rectangle {
+                    x: chartFrame.plotLeft
+                    y: chartFrame.plotBottom
+                    width: chartFrame.plotWidth
+                    height: 1
+                    color: Kirigami.Theme.disabledTextColor
+                }
+
+                Repeater {
+                    model: 3
+                    Rectangle {
+                        x: chartFrame.plotLeft
+                        y: chartFrame.yLabelY(index) + 7
+                        width: chartFrame.plotWidth
+                        height: 1
+                        color: Kirigami.Theme.disabledTextColor
+                        opacity: 0.22
                     }
                 }
-                ctx.stroke()
+
+                Repeater {
+                    model: 3
+                    QtControls.Label {
+                        x: 4
+                        y: chartFrame.yLabelY(index)
+                        width: chartFrame.plotLeft - 8
+                        height: 14
+                        horizontalAlignment: Text.AlignRight
+                        font.pixelSize: 10
+                        text: chartFrame.yLabel(index)
+                    }
+                }
+
+                QtControls.Label {
+                    x: 4
+                    y: chartFrame.plotTop + 12
+                    font.pixelSize: 10
+                    text: tr("yAxis")
+                }
+
+                QtControls.Label {
+                    width: 90
+                    height: 14
+                    x: chartFrame.plotLeft
+                    y: parent.height - 28
+                    visible: chartFrame.hasPoints
+                    color: Kirigami.Theme.textColor
+                    font.pixelSize: 10
+                    elide: Text.ElideRight
+                    text: chartFrame.hasPoints ? chartFrame.dateLabel(chartFrame.points[0].timestamp) : ""
+                }
+
+                QtControls.Label {
+                    width: 90
+                    height: 14
+                    x: Math.max(chartFrame.plotLeft, Math.min(parent.width - width, chartFrame.plotRight - width))
+                    y: parent.height - 28
+                    visible: chartFrame.hasPoints
+                    color: Kirigami.Theme.textColor
+                    font.pixelSize: 10
+                    horizontalAlignment: Text.AlignRight
+                    elide: Text.ElideRight
+                    text: chartFrame.hasPoints ? chartFrame.dateLabel(chartFrame.points[chartFrame.points.length - 1].timestamp) : ""
+                }
+
+                QtControls.Label {
+                    width: 40
+                    height: 14
+                    x: Math.max(chartFrame.plotLeft, Math.min(parent.width - width, chartFrame.plotRight - width))
+                    y: parent.height - 14
+                    color: Kirigami.Theme.textColor
+                    font.pixelSize: 10
+                    horizontalAlignment: Text.AlignRight
+                    text: tr("xAxis")
+                }
+
+                Repeater {
+                    model: chartFrame.hasPoints ? chartFrame.points.length : 0
+                    Rectangle {
+                        readonly property real totalValue: Number(chartFrame.points[index].total)
+                        width: chartFrame.barWidth
+                        height: Math.max(2, chartFrame.plotBottom - chartFrame.yForTotal(totalValue))
+                        x: Math.max(chartFrame.plotLeft, Math.min(chartFrame.plotRight - width, chartFrame.xForIndex(index) - width / 2))
+                        y: chartFrame.plotBottom - height
+                        color: Kirigami.Theme.highlightColor
+                        opacity: 0.32
+                    }
+                }
+
+                Repeater {
+                    model: chartFrame.hasPoints ? chartFrame.points.length : 0
+                    Rectangle {
+                        width: 6
+                        height: 6
+                        radius: 3
+                        x: chartFrame.xForIndex(index) - width / 2
+                        y: chartFrame.yForTotal(chartFrame.points[index].total) - height / 2
+                        color: Kirigami.Theme.highlightColor
+                        border.color: Kirigami.Theme.backgroundColor
+                        border.width: 1
+                    }
+                }
+
+                QtControls.Label {
+                    anchors.centerIn: parent
+                    visible: !chartFrame.hasPoints
+                    opacity: 0.7
+                    text: tr("empty")
+                }
             }
         }
 

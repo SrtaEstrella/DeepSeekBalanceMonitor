@@ -199,7 +199,7 @@ checksum = "ef8ae57c4978a2acd8b869ce6b9ca1dfe817bff704c220209fdef2c0b75a01b9"
 
 [[package]]
 name = "deepseek-balance-monitor"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "chrono",
  "image",

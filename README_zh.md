@@ -12,6 +12,28 @@
 
 ---
 
+## 当前版本亮点
+
+- 自定义图标样式：5 套预置配色、自定义 hex 颜色和图标描边开关。
+- 历史记录页：分页余额记录、交互式趋势图和消耗速率分析。
+- CSV 导出支持配置保存路径。
+- 余额通知和历史页显示消耗速率与预计可用时间。
+- 支持 HTTP 代理。
+- 余额详情通知使用 emoji 前缀和相对上次查询时间。
+
+Rust v1.2：
+
+- Rust Windows 和 Rust Linux 将 API Key 加密存入 SQLite `secure_settings`，旧版 `config.json` 明文 Key 会自动迁移并清空。
+- Rust 演示模式通过把 API Key 保存为 `demo` 触发，使用独立 `demo_mode_balance` 表，不请求真实 API。
+- Rust Linux 新增 `dsmon set-key` 和 `dsmon set <field> <value>`；daemon 每轮轮询都会重新读取配置，CLI 固定英文输出，安装脚本可提示输入 API Key。
+- Plasma 6 小组件新增透明液态玻璃桌面样式，显示余额、上次查询、服务状态、预计可用时间、刷新按钮和 emoji 状态文案。
+- Rainmeter 桌面小工具通过仅本地可访问的状态接口供给数据，并随 Release 提供 `.rmskin` 皮肤包；当前 Rust Windows 已支持该接口，Python Windows 后续可按同一契约接入。
+
+Python v1.2：
+
+- Demo 模式提供开发者面板，可在无真实 API Key 时测试状态。
+- Windows Credential Manager 加密保存 API Key。
+
 ## 功能
 
 - **托盘图标显示余额** — 余额以数字形式显示在任务栏圆角图标上。青色（正常）、红色（低余额）、暖灰色（API 服务异常）、灰色（无数据）。5 套可切换配色 + 自定义 hex 颜色
@@ -20,6 +42,7 @@
 - **历史记录页** — 分页表格展示所有余额记录，附带折线图和消耗分析，支持 CSV 导出
 - **设置** — API Key（Windows 凭据管理器加密存储）、查询间隔、预警阈值、提醒模式、图标主题、代理等
 - **Demo 模式** — `--demo` 免 Key 体验，开发者面板可调参数
+- **可选桌面小工具** — Linux 支持 KDE Plasma 6，Windows 可通过本地小工具状态接口搭配 Rainmeter 使用
 - **社区移植** — Rust-Win（Win7+）、Rust-Linux（CLI + Plasma 6 小组件）、Py-Mac（Keychain 加密，WebView 设置界面）
 
 ### 通知预览
@@ -43,6 +66,18 @@
 ### 直接下载
 
 从 [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases) 下载最新文件。Python 打包版使用 `DeepSeekBalanceMonitor.exe`，Rust Windows 版使用 `deepseek-balance-monitor.exe`，Linux 版使用 `deepseek-balance-monitor-*-linux-x86_64.tar.gz`。发布版无需 Python 环境。
+
+### 可选 Rainmeter 小工具（Windows）
+
+Rainmeter 桌面小工具是可选功能。它从正在运行的 DeepSeek Balance Monitor 主进程读取本地状态；不会保存或接收你的 API Key。当前 Rust Windows 已提供该本地接口，Python Windows 后续可按同一接口接入。
+
+1. 从 [rainmeter.net](https://www.rainmeter.net/) 下载并安装 Rainmeter。
+2. 从 Releases 下载并运行提供 Rainmeter 接口的 Windows 版。当前发布包请使用 Rust Windows 版 `deepseek-balance-monitor-*-windows-*.exe`。
+3. 从同一个 Release 下载 `deepseek-balance-monitor-*-rainmeter.rmskin`。
+4. 双击 `.rmskin` 文件并安装皮肤。
+5. 启动或保持主程序运行，然后在 Rainmeter 中加载 `DeepSeekBalanceMonitor\DeepSeekBalanceMonitor.ini`。
+
+`.rmskin` 包由 GitHub Actions 使用 [`rmskin-builder`](https://pypi.org/project/rmskin-builder/) 生成；该打包工具由 [`2bndy5/rmskin-action`](https://github.com/2bndy5/rmskin-action) 提供。
 
 ### 运行要求
 
@@ -95,21 +130,25 @@ cargo +1.77.2 build --release --locked
 Linux 发布包会安装 `/usr/local/bin/dsmon`、`/etc/systemd/user/dsmon.service`，并在 Plasma 6 环境中安装可选小组件：
 
 ```bash
-tar -xzf deepseek-balance-monitor-1.1-linux-x86_64.tar.gz
-cd deepseek-balance-monitor-1.1-linux-x86_64
+tar -xzf deepseek-balance-monitor-*-linux-x86_64.tar.gz
+cd deepseek-balance-monitor-*-linux-x86_64
 sudo ./install.sh
 ```
 
-常用 Linux CLI 命令：
+CLI 目前仅 Rust Linux 版提供。Windows 和 MacOS 版使用图形界面 / 托盘操作。
 
-```bash
-dsmon init-config
-dsmon check
-dsmon daemon
-dsmon history [days]
-dsmon history export [days] [currency|all] [path|-]
-dsmon widget-status
-```
+常用 Linux CLI 操作：
+
+| 命令 | 作用 |
+|---|---|
+| `dsmon init-config` | 在配置文件不存在时创建默认配置 |
+| `dsmon set-key` | 从标准输入读取 API Key，并加密保存到 SQLite；输入 `demo` 可进入演示模式 |
+| `dsmon set <field> <value>` | 修改单个配置项，例如 `interval`、`threshold`、`ui-language`、`http-proxy`、`theme`、`color-ok` |
+| `dsmon check` | 立即查询一次余额，并以英文输出结果 |
+| `dsmon daemon` | 运行 systemd 用户服务使用的轮询循环 |
+| `dsmon history [days]` | 输出余额历史统计摘要 |
+| `dsmon history export [days] [currency\|all] [path\|-]` | 导出历史 CSV；`-` 表示输出到 stdout |
+| `dsmon widget-status` | 输出 Plasma 小组件读取的 JSON 状态 |
 
 **MacOS（`src/mac/`）：**
 
@@ -125,9 +164,9 @@ bash ../scripts/build_mac.sh
 |---|---|---|---|---|
 | 运行时 | Python + pystray + Tkinter | 原生 Rust + native-windows-gui | 原生 Rust 命令行 | Python + rumps + webview |
 | 最低系统 | Windows 10+ | Windows 7 SP1+ | RHEL 8 / Ubuntu 20.04 同时代 glibc | MacOS 10.14+ |
-| 首次无 Key | 弹出设置窗口 | 打开 `config.json` 编辑 | 输出配置路径并创建配置 | 弹出设置窗口 |
+| 首次无 Key | 弹出设置窗口 | 弹出设置窗口 | 安装 / 检查时提示运行 `dsmon set-key` | 弹出设置窗口 |
 | 开机自启 | 注册表 Run 键 | 启动文件夹快捷方式 | systemd 用户服务 | 登录项 |
-| API Key 存储 | Windows Credential Manager | config.json | config.json | MacOS Keychain |
+| API Key 存储 | Windows Credential Manager | SQLite `secure_settings`，使用 Windows DPAPI 加密 | SQLite `secure_settings`，本地加密 | MacOS Keychain |
 
 ## 项目结构
 
@@ -141,6 +180,7 @@ DeepSeekBalance/
 │   ├── settings_dialog.py
 │   ├── tray_app.py
 │   ├── credential_store.py
+│   ├── secure_settings.py
 │   └── storage.py
 ├── src/mac/                    # 原生 MacOS 移植
 │   ├── main.py
@@ -190,13 +230,13 @@ Windows 配置文件路径：`%APPDATA%\DeepSeek Balance Monitor\config.json`
 }
 ```
 
-API Key 存储在系统凭据管理器（Windows Credential Manager / MacOS Keychain），不写入此文件。
+API Key 不写入此文件。Python Windows 使用 Windows Credential Manager，Python MacOS 使用 Keychain，Rust Windows / Linux 将 Key 加密存入 SQLite `secure_settings`。
 
 Linux `dsmon` 配置路径：`~/.config/deepseek-balance-monitor/config.json`，日志路径：`~/.local/state/deepseek-balance-monitor/app.log`。
 
 Windows 日志路径：`%APPDATA%\DeepSeek Balance Monitor\app.log`
 
-Rust Windows 和 Rust Linux 会在各自应用数据目录保存 `balance_history.db`。历史记录使用与日志清理相同的 `retention_days` 保留天数。Windows 设置窗口和 Plasma 小组件设置页提供“历史”选项卡，支持天数 / 币种筛选、趋势统计、图表和 CSV 导出。Linux CLI 固定英文输出，`dsmon history` 显示文字统计，不直接展示原始行。
+Rust Windows 和 Rust Linux 会在各自应用数据目录保存加密设置和 `balance_history.db`。历史记录使用与日志清理相同的 `retention_days` 保留天数。Windows 设置窗口和 Plasma 小组件设置页提供“历史”选项卡，支持天数 / 币种筛选、趋势统计、图表和 CSV 导出。Linux CLI 固定英文输出，`dsmon history` 显示文字统计，不直接展示原始行。
 
 ## 托盘菜单
 
@@ -222,46 +262,7 @@ Rust Windows 和 Rust Linux 会在各自应用数据目录保存 `balance_histor
 
 ## 更新日志
 
-### v1.1
-
-**新增**
-
-- 接入 `status.deepseek.com` 实时查询 API 服务状态。API 异常时托盘图标显示暖灰色，状态翻转时弹出独立桌面通知
-- 托盘右键菜单新增「充值」，一键跳转 DeepSeek 开放平台充值页面
-- SQLite 余额历史存储，日志与记录自动清理（默认保留 30 天）
-- 社区移植版本：Rust-Win（原生 Rust，Win7+）、Rust-Linux（CLI + Plasma 6 小组件）、Py-Mac（原生 MacOS，Keychain 加密）
-  - Rust 版支持历史图表、天数/币种筛选、CSV 导出和 `dsmon history` CLI 命令
-  - Plasma 小组件右键可启动/退出守护进程，命令失败时弹出桌面通知
-  - Windows 7/8.1 根证书更新辅助脚本
-
-**变更**
-
-- 低余额提醒改为三选一下拉菜单：不提醒 / 持续提醒 / 仅提醒一次，默认仅一次
-- 余额详情通知卡片重新设计：标题固定、余额明细内嵌、API 服务状态行常驻
-- 设置页保存时校验所有数值输入范围，非法输入弹出明确警告提示
-
-**技术**
-
-- 移除 `requests`，全部改用 Python 标准库 `urllib.request`
-
-### v1.2 (2026-05-11)
-
-**新增**
-
-- 自定义图标样式：5 套预置配色 + 自定义 hex 颜色 + 图标描边开关
-- 历史记录页：分页表格 + 折线图 + 消耗速率分析，支持 CSV 导出
-- 消耗速率估算：日均消耗与预计可用天数/小时，通知和历史页同步显示
-- Demo 模式（`--demo`），可调出开发者面板测试各种状态场景
-- HTTP 代理支持
-- API Key 加密存入 Windows 凭据管理器，不再写入 config.json
-
-**变更**
-
-- 余额详情通知：emoji 前缀、相对时间、服务状态位置调整
-- 设置/历史/开发者面板共享根窗口，历史和开发者面板支持重复唤起聚焦
-- 设置页改进：输入校验错误提示、底部版本号与贡献者信息、可点击项目链接
-- API 服务状态同步写入本地数据库
-- MacOS 社区版：WebView 设置界面，支持深/浅色主题、交互式历史图表和 CSV 导出（仅 Mac）
+[CHANGELOG_zh.md](CHANGELOG_zh.md)
 
 ## 协议
 

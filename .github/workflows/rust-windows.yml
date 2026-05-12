@@ -21,6 +21,14 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+      AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+      AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
     defaults:
       run:
         working-directory: rust-windows
@@ -70,6 +78,23 @@ jobs:
             Copy-Item "target/$($target.Triple)/release/deepseek-balance-monitor.exe" $asset
           }
 
+      - name: Sign Windows executables
+        if: ${{ env.AZURE_CLIENT_ID != '' && env.AZURE_TENANT_ID != '' && env.AZURE_TRUSTED_SIGNING_ENDPOINT != '' && env.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME != '' && env.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME != '' }}
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-client-id: ${{ env.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ env.AZURE_TENANT_ID }}
+          azure-client-secret: ${{ env.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ env.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ env.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ env.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\rust-windows\target
+          files-folder-filter: deepseek-balance-monitor-*-windows-*.exe
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
       - name: Upload executable
         uses: actions/upload-artifact@v4
         with:
@@ -93,5 +118,6 @@ jobs:
             ## Rust builds
             - Windows: native x86_64 and i686 executables.
             - Linux: x86_64 CLI daemon package with systemd user service and KDE Plasma widget.
+            - Rainmeter: Windows desktop widget skin package.
           generate_release_notes: true
           overwrite_files: true
