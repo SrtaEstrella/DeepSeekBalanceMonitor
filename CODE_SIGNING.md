@@ -15,11 +15,13 @@ Windows Defender SmartScreen 主要看两个信号：
 
 - Microsoft SmartScreen reputation: https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation
 - Microsoft code signing options: https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options
-- SignPath.io documentation: https://about.signpath.io/
+- SignPath Foundation apply: https://signpath.org/apply
+- SignPath Foundation terms: https://signpath.org/terms
+- SignPath.io documentation: https://docs.signpath.io/
 
 ## 推荐方案：SignPath.io（免费版）
 
-本仓库的 Windows release workflow 已集成 SignPath.io 代码签名服务。SignPath 为开源项目提供免费签名服务，fork 开发者只需注册账号并配置 GitHub Secrets/Variables，后续发布时 workflow 会自动签名。
+本仓库的 Windows release workflow 已集成 SignPath.io 代码签名服务。开源项目应先通过 SignPath Foundation 申请免费 SignPath.io 订阅和证书授权，获批后再配置 GitHub Secrets/Variables，后续发布时 workflow 会自动签名。
 
 适用场景：
 
@@ -34,86 +36,119 @@ Windows Defender SmartScreen 主要看两个信号：
 - 签名请求排队时间可能较长（通常几分钟到几小时）。
 - 新版本仍可能出现 SmartScreen 提示，直到文件哈希积累信誉。
 
-## SignPath.io 注册与配置
+## SignPath Foundation 开源项目申请流程
 
-### 步骤 1：注册 SignPath.io 账号
+开源项目不再按普通商业账户流程直接申请证书。先访问 https://signpath.org/apply 提交免费 SignPath.io 订阅申请；证书签发给 SignPath Foundation，项目通过 SignPath.io 使用该证书。
 
-1. 访问 https://signpath.io 并注册账号。
-2. 使用 GitHub 账号登录（推荐）。
+### 1. 申请前准备
 
-### 步骤 2：创建组织（Organization）
+提交申请前，先把仓库和发布信息整理好：
 
-1. 登录后进入 Dashboard。
-2. 点击 **Create Organization**。
-3. 填写组织名称（建议使用 GitHub 用户名或组织名）。
-4. 记录 **Organization ID**（UUID 格式，如 `12345678-1234-1234-1234-123456789abc`）。
+- 仓库必须公开，项目许可证应为 OSI 认可的开源许可证，且不能包含商业双许可或专有组件。
+- 项目必须已经发布过要签名的同类产物，例如 GitHub Release 中已有 Windows `.exe`。
+- README、Release 或下载页应清楚说明软件功能，避免审核方无法判断项目用途。
+- 产物必须由本仓库源码和构建脚本自动构建；不要用本项目证书签名上游项目二进制。
+- 维护者应启用 MFA，并明确谁可以提交代码、审核 PR、批准签名请求。
+- 项目不能包含恶意软件、潜在有害程序、黑客工具，或会绕过用户安全控制的功能。
 
-### 步骤 3：连接 GitHub 仓库
+仓库还需要包含 **Code signing policy**。可以在 README、Release 页面或本文档中写明：
 
-1. 进入 **Settings** → **Source Code Management**。
-2. 点击 **Connect GitHub** 并授权访问。
-3. 选择你的 fork 仓库进行连接。
+```text
+Free code signing provided by SignPath.io, certificate by SignPath Foundation.
+```
 
-### 步骤 4：创建项目（Project）
+同时列出签名角色：
+- Authors/Committers：可直接修改源码的人。
+- Reviewers：负责审核外部贡献或重要改动的人。
+- Approvers：负责批准 release 签名请求的人。
 
-1. 点击 **Projects** → **Create Project**。
-2. 填写项目信息：
-   - **Name**: 项目显示名称（如 `DeepSeekBalanceMonitor`）
-   - **Slug**: 项目标识符（如 `deepseek-balance-monitor`）
-   - **Repository**: 选择已连接的 GitHub 仓库
-3. 记录 **Project Slug**。
+如果程序会联网或处理用户数据，还应提供隐私政策；如果不会主动传输数据，可以明确说明程序不会在用户未请求时向网络系统传输信息。
 
-### 步骤 5：配置签名策略（Signing Policy）
+### 2. 提交开源项目申请
 
-1. 进入项目设置 → **Signing Policies**。
-2. 默认会有一个 `release` 策略，如果没有则创建：
-   - **Slug**: `release`
-   - **Name**: Release Signing
-3. 在策略中配置：
-   - **Allowed Artifact Configurations**: 选择 `All` 或手动添加 `.exe` 文件模式
-   - **Approvers**: 添加自己作为审批人（免费版可能需要手动审批）
+1. 打开 https://signpath.org/apply。
+2. 填写项目名称、仓库 URL、项目主页或下载页、许可证、维护者联系方式。
+3. 说明要签名的产物类型，例如 Windows `.exe`、安装包或压缩包。
+4. 提交后等待 SignPath Foundation 审核项目声誉、仓库控制权、许可证、发布记录、签名政策和自动构建方式。
+5. 如果审核方要求补充信息，优先补齐 README、Release、隐私政策或 Code signing policy，再回复审核。
 
-### 步骤 6：创建 API Token
+### 3. 获批后配置 SignPath
 
-1. 进入 **Settings** → **API Tokens**。
-2. 点击 **Create Token**。
-3. 填写：
-   - **Name**: 如 `github-actions`
-   - **Organization**: 选择你的组织
-   - **Projects**: 选择你的项目（或选择 `All`）
-   - **Roles**: 选择 `Signing Request Creator`
-4. 复制生成的 Token（只显示一次）。
+获批后，按 SignPath 提供的订阅信息配置项目：
 
-### 步骤 7：获取所有配置值
+1. 创建或确认 SignPath Project，记录 `Project Slug`。
+2. 设置 Repository URL，指向实际发布源码的 GitHub 仓库。
+3. 配置 GitHub Actions 作为 Trusted Build System。
+4. 在 release 签名策略中启用 Origin Verification；开源签名要求产物来源可验证。
+5. 建立 Artifact Configuration，匹配本项目发布的 `.exe` 产物，并确保文件元数据中的产品名和版本号可被检查。
+6. 配置 `release` 签名策略和审批人；开源证书签名通常需要每次 release 手动批准。
+7. 创建仅用于 CI 的 API Token，角色使用 `Signing Request Creator`。
 
-完成以上步骤后，你应该有以下信息：
+### 4. 写入 GitHub 配置
+
+取得以下配置值后写入 GitHub Secrets/Variables：
 
 ```
-SIGNPATH_API_TOKEN: 你在步骤 6 创建的 Token
-SIGNPATH_ORG_ID: 你在步骤 2 记录的 Organization ID
-SIGNPATH_PROJECT_SLUG: 你在步骤 4 记录的 Project Slug
+SIGNPATH_API_TOKEN: SignPath 中创建的 CI API Token
+SIGNPATH_ORG_ID: SignPath 提供或后台显示的 Organization ID
+SIGNPATH_PROJECT_SLUG: SignPath 项目的 Project Slug
 ```
 
 ## GitHub fork 仓库配置
 
-进入你的 fork 仓库：
+以下配置应添加到执行发布 workflow 的仓库，也就是你的 fork 仓库。如果你在上游仓库发布，则配置上游仓库；如果在 fork 发布，则配置 fork。需要对该仓库有写入或管理权限。
 
-```
-Settings -> Secrets and variables -> Actions
-```
+### 进入 Actions 配置页
 
-### 添加 Secrets
+1. 打开 GitHub 仓库主页。
+2. 点击 **Settings**。
+3. 在左侧 **Security** 区域选择 **Secrets and variables**。
+4. 点击 **Actions**。
+
+### 添加 Secret
+
+进入 **Secrets** 标签页，点击 **New repository secret**，添加：
 
 | Name | Value | 说明 |
 |------|-------|------|
-| `SIGNPATH_API_TOKEN` | 你的 API Token | SignPath API 访问令牌 |
+| `SIGNPATH_API_TOKEN` | SignPath CI API Token | 敏感值，只放在 Secret 中，不要写入 Variables、源码或日志 |
 
 ### 添加 Variables
 
+进入 **Variables** 标签页，点击 **New repository variable**，添加：
+
 | Name | Value | 说明 |
 |------|-------|------|
-| `SIGNPATH_ORG_ID` | 你的 Organization ID | 组织 UUID |
-| `SIGNPATH_PROJECT_SLUG` | 你的 Project Slug | 项目标识符 |
+| `SIGNPATH_ORG_ID` | Organization ID | SignPath 组织 ID |
+| `SIGNPATH_PROJECT_SLUG` | Project Slug | SignPath 项目标识符 |
+
+### 检查 workflow 权限
+
+本项目 workflow 已在 job 中声明：
+
+```yaml
+permissions:
+  actions: read
+  contents: write
+  id-token: write
+```
+
+含义：
+- `actions: read`：SignPath action 使用 `github.token` 读取 GitHub artifact。
+- `contents: write`：tag 发布时上传或创建 GitHub Release。
+- `id-token: write`：保留给受信构建/签名链路使用。
+
+如果组织或仓库限制了 GitHub Actions 权限，确认 **Settings → Actions → General** 中允许运行 Actions，并且没有阻止 `GITHUB_TOKEN` 读取 artifacts 或写入 release。
+
+### 首次验证
+
+1. 先不配置上述三项，运行 release workflow 应该跳过签名并产出未签名文件。
+2. 配齐 `SIGNPATH_API_TOKEN`、`SIGNPATH_ORG_ID`、`SIGNPATH_PROJECT_SLUG` 后，再触发 tag release。
+3. 在 Actions 日志中确认出现 `Sign Windows executable` 或 `Sign Windows executables` 步骤。
+4. 如果 SignPath 需要审批，进入 SignPath 后台批准 signing request。
+5. workflow 完成后下载 Release 产物，用本文后面的 `Get-AuthenticodeSignature` 检查签名。
+
+注意：GitHub 不会把普通 repository secrets 传给来自外部 fork 的 pull request workflow。本项目签名设计用于 tag release 或仓库内受信分支，PR 构建没有签名配置时会自动保持未签名构建。
 
 ## 本项目 workflow 行为
 
