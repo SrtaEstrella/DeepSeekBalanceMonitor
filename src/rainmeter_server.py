@@ -78,9 +78,7 @@ def _start_server(app):
                 # service_status_line
                 indicator = st.get("indicator") if st else None
                 key = f"status_{indicator}" if indicator else "status_unknown"
-                icons = {"none": "🟢", "minor": "🟡", "major": "🟠", "critical": "🔴", "maintenance": "🔵"}
-                icon = icons.get(indicator, "⚪")
-                service_status_line = f"{icon} {T(key, lang)}"
+                service_status_line = T(key, lang)
 
                 # estimated_line
                 from src.storage import get_consumption_rate

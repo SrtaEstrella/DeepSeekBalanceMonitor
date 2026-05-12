@@ -225,8 +225,8 @@ def on_show_balance(icon, item):
         else:
             hrs = mins // 60
             ago = f"{hrs} hr ago" if lang == "en" else f"{hrs} 小时前"
-        sep = ": " if lang == "en" else "："
-        lines.append(f"🕐 {T('last_check', lang)}{sep}{ago}")
+        sp = " " if lang == "en" else ""
+        lines.append(f"🕐 {T('last_check', lang)}{sp}{ago}")
     msg = "\n".join(lines)
 
     try:
