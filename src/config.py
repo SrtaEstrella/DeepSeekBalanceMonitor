@@ -58,7 +58,7 @@ DEFAULT_CONFIG = {
 _T = {
     "zh": {
         "total_balance":    "总余额",
-        "last_check":       "上次查询",
+        "last_check":       "上次查询：",
         "not_checked":      "尚未查询",
         "error_no_key":     "未配置 API Key",
         "view_balance":     "📋 查看余额",
@@ -109,7 +109,7 @@ _T = {
         "status_critical":    "关键不可用",
         "status_maintenance": "维护中",
         "status_unknown":     "服务状态未知",
-        "service_status":     "DeepSeek API 服务状态：",
+        "service_status":     "API 服务状态：",
         "retention_label":    "日志和记录保留天数：",
         "api_alert_label":    "API 服务状态变化提醒",
         "auto_start_label": "开机自动启动：",
@@ -142,7 +142,7 @@ _T = {
     },
     "en": {
         "total_balance":    "Total balance",
-        "last_check":       "Last check",
+        "last_check":       "Last check:",
         "not_checked":      "Not checked",
         "error_no_key":     "No API Key configured",
         "view_balance":     "📋 View Balance",
@@ -193,7 +193,7 @@ _T = {
         "status_critical":    "Critical Outage",
         "status_maintenance": "Under Maintenance",
         "status_unknown":     "Status Unknown",
-        "service_status":     "DeepSeek API Status: ",
+        "service_status":     "API Status:",
         "retention_label":    "Log & record retention (days): ",
         "api_alert_label":    "API service status alerts",
         "auto_start_label": "Auto-start on boot: ",

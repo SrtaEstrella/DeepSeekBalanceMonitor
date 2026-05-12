@@ -21,7 +21,7 @@ A Windows tray app and Linux CLI/Plasma widget that periodically query the DeepS
 - HTTP proxy support for restricted network environments.
 - Balance detail notifications now use emoji-prefixed lines and relative last-check time.
 - Demo mode for testing without a real API key: developer tools panel on Py-Win/Py-Mac, `demo` API key trigger on Rust.
-- Encrypted API key storage: Windows Credential Manager on Py-Win, SQLite `secure_settings` on Rust, Keychain on Py-Mac.
+- Encrypted API key storage: Fernet + SQLite on Py-Win, SQLite `secure_settings` on Rust, Keychain on Py-Mac.
 - Rainmeter desktop widget: local-only status interface; `.rmskin` release packaging. Supported on both Rust and Python Windows builds.
 
 Rust Linux-specific:
@@ -35,7 +35,7 @@ Rust Linux-specific:
 - **Low balance notification** — Three modes: never, always, or once per drop (default). The icon turns red regardless.
 - **Balance details** — Left-click the icon to see balance with emoji prefixes, consumption rate estimate, API service status, and relative last-check time.
 - **History viewer** — Paginated table of all balance records with interactive trend chart and consumption rate analysis. CSV export.
-- **Settings** — API key (Windows Credential Manager), check interval, alert threshold, alert mode, icon theme, proxy, and more.
+- **Settings** — API key (Fernet + SQLite), check interval, alert threshold, alert mode, icon theme, proxy, and more.
 - **Demo mode** — `--demo` flag for testing without an API key, with a developer tools panel.
 - **Optional desktop widgets** — KDE Plasma 6 on Linux, and Rainmeter on Windows (Rust and Python builds both supported).
 - **Community ports** — Rust-Win (Win7+), Rust-Linux (CLI + Plasma 6 widget), Py-Mac (MacOS, Keychain-secured, WebView settings UI).
@@ -165,7 +165,7 @@ bash ../scripts/build_mac.sh
 | Min OS | Windows 10+ | Windows 7 SP1+ | RHEL 8 / Ubuntu 20.04 era glibc | MacOS 10.14+ |
 | First launch (no key) | Opens settings dialog | Opens settings dialog | Installer/check prompts for `dsmon set-key` | Opens settings window |
 | Auto-start | Registry Run key | Startup folder shortcut | systemd user service | Login items |
-| API key storage | Windows Credential Manager | SQLite `secure_settings` encrypted with Windows DPAPI | SQLite `secure_settings` encrypted locally | MacOS Keychain |
+| API key storage | Fernet + SQLite | SQLite `secure_settings` encrypted with Windows DPAPI | SQLite `secure_settings` encrypted locally | MacOS Keychain |
 
 ## Project Structure
 
@@ -231,7 +231,7 @@ Windows builds store settings in `%APPDATA%\DeepSeek Balance Monitor\config.json
 }
 ```
 
-API keys are not written to this file. Python Windows uses Windows Credential Manager, Python MacOS uses Keychain, and Rust Windows/Linux store encrypted keys in SQLite `secure_settings`.
+API keys are not written to this file. Python Windows uses Fernet + SQLite, Python MacOS uses Keychain, and Rust Windows/Linux store encrypted keys in SQLite `secure_settings`.
 
 Linux `dsmon` stores settings in `~/.config/deepseek-balance-monitor/config.json` and logs in `~/.local/state/deepseek-balance-monitor/app.log`.
 

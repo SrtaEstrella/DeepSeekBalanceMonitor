@@ -21,7 +21,7 @@
 - 支持 HTTP 代理。
 - 余额详情通知使用 emoji 前缀和相对上次查询时间。
 - Demo 模式无需真实 Key 即可测试：Py-Win/Py-Mac 提供开发者面板，Rust 通过保存 `demo` 作为 API Key 触发。
-- API Key 加密存储：Py-Win 使用 Windows 凭据管理器，Rust 使用 SQLite `secure_settings`，Py-Mac 使用 Keychain。
+- API Key 加密存储：Py-Win 使用 Fernet + SQLite，Rust 使用 SQLite `secure_settings`，Py-Mac 使用 Keychain。
 - Rainmeter 桌面小工具：仅本地可访问的状态接口；`.rmskin` 发布打包。Rust/Python Windows 双版均已支持。
 
 Rust Linux 版本限定：
@@ -35,7 +35,7 @@ Rust Linux 版本限定：
 - **低余额通知** — 三种模式：不提醒、持续提醒、仅提醒一次（默认）。图标仍会变红
 - **余额详情** — 左键单击图标查看余额（emoji 前缀）、消耗速率、API 服务状态和相对时间
 - **历史记录页** — 分页表格展示所有余额记录，附带折线图和消耗分析，支持 CSV 导出
-- **设置** — API Key（Windows 凭据管理器加密存储）、查询间隔、预警阈值、提醒模式、图标主题、代理等
+- **设置** — API Key（Fernet + SQLite加密存储）、查询间隔、预警阈值、提醒模式、图标主题、代理等
 - **Demo 模式** — `--demo` 免 Key 体验，开发者面板可调参数
 - **可选桌面小工具** — Linux 支持 KDE Plasma 6，Windows 支持 Rainmeter（Rust/Python 双版均已适配）
 - **社区移植** — Rust-Win（Win7+）、Rust-Linux（CLI + Plasma 6 小组件）、Py-Mac（Keychain 加密，WebView 设置界面）
@@ -165,7 +165,7 @@ bash ../scripts/build_mac.sh
 | 最低系统 | Windows 10+ | Windows 7 SP1+ | RHEL 8 / Ubuntu 20.04 同时代 glibc | MacOS 10.14+ |
 | 首次无 Key | 弹出设置窗口 | 弹出设置窗口 | 安装 / 检查时提示运行 `dsmon set-key` | 弹出设置窗口 |
 | 开机自启 | 注册表 Run 键 | 启动文件夹快捷方式 | systemd 用户服务 | 登录项 |
-| API Key 存储 | Windows Credential Manager | SQLite `secure_settings`，使用 Windows DPAPI 加密 | SQLite `secure_settings`，本地加密 | MacOS Keychain |
+| API Key 存储 | Fernet + SQLite | SQLite `secure_settings`，使用 Windows DPAPI 加密 | SQLite `secure_settings`，本地加密 | MacOS Keychain |
 
 ## 项目结构
 
@@ -231,7 +231,7 @@ Windows 配置文件路径：`%APPDATA%\DeepSeek Balance Monitor\config.json`
 }
 ```
 
-API Key 不写入此文件。Python Windows 使用 Windows Credential Manager，Python MacOS 使用 Keychain，Rust Windows / Linux 将 Key 加密存入 SQLite `secure_settings`。
+API Key 不写入此文件。Python Windows 使用 Fernet + SQLite 加密，Python MacOS 使用 Keychain，Rust Windows / Linux 将 Key 加密存入 SQLite `secure_settings`。
 
 Linux `dsmon` 配置路径：`~/.config/deepseek-balance-monitor/config.json`，日志路径：`~/.local/state/deepseek-balance-monitor/app.log`。
 
