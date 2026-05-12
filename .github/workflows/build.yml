@@ -28,6 +28,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     permissions:
+      actions: read
       contents: write
       id-token: write
     env:
@@ -68,7 +69,7 @@ jobs:
       - name: Sign Windows executable
         id: sign
         if: ${{ env.SIGNPATH_API_TOKEN != '' && env.SIGNPATH_ORG_ID != '' && env.SIGNPATH_PROJECT_SLUG != '' }}
-        uses: signpath/github-signing-action@v1
+        uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ env.SIGNPATH_API_TOKEN }}
           organization-id: ${{ env.SIGNPATH_ORG_ID }}
@@ -76,20 +77,14 @@ jobs:
           signing-policy-slug: 'release'
           github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
           wait-for-completion: true
-          timeout: 300
-
-      - name: Download signed artifact
-        if: ${{ env.SIGNPATH_API_TOKEN != '' && env.SIGNPATH_ORG_ID != '' && env.SIGNPATH_PROJECT_SLUG != '' }}
-        uses: actions/download-artifact@v4
-        with:
-          name: unsigned-exe-signed
-          path: dist-signed
+          output-artifact-directory: dist-signed
 
       - name: Prepare release file
         shell: pwsh
         run: |
-          if (Test-Path "dist-signed/DeepSeekBalanceMonitor.exe") {
-            Copy-Item "dist-signed/DeepSeekBalanceMonitor.exe" "dist/DeepSeekBalanceMonitor.exe" -Force
+          $signedFile = Get-ChildItem "dist-signed" -Filter "DeepSeekBalanceMonitor.exe" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($signedFile) {
+            Copy-Item $signedFile.FullName "dist/DeepSeekBalanceMonitor.exe" -Force
             Write-Host "Using signed executable"
           } else {
             Write-Host "Using unsigned executable"

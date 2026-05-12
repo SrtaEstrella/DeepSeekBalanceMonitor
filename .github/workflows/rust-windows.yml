@@ -20,6 +20,7 @@ jobs:
   build:
     runs-on: windows-latest
     permissions:
+      actions: read
       contents: write
       id-token: write
     env:
@@ -86,7 +87,7 @@ jobs:
       - name: Sign Windows executables
         id: sign
         if: ${{ env.SIGNPATH_API_TOKEN != '' && env.SIGNPATH_ORG_ID != '' && env.SIGNPATH_PROJECT_SLUG != '' }}
-        uses: signpath/github-signing-action@v1
+        uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ env.SIGNPATH_API_TOKEN }}
           organization-id: ${{ env.SIGNPATH_ORG_ID }}
@@ -94,25 +95,22 @@ jobs:
           signing-policy-slug: 'release'
           github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
           wait-for-completion: true
-          timeout: 300
-
-      - name: Download signed executables
-        if: ${{ env.SIGNPATH_API_TOKEN != '' && env.SIGNPATH_ORG_ID != '' && env.SIGNPATH_PROJECT_SLUG != '' }}
-        uses: actions/download-artifact@v4
-        with:
-          name: unsigned-windows-exes-signed
-          path: rust-windows/target-signed
+          output-artifact-directory: rust-windows/target-signed
 
       - name: Replace with signed executables
         shell: pwsh
         run: |
           if (Test-Path "target-signed") {
-            $signedFiles = Get-ChildItem "target-signed" -Filter "*.exe"
+            $signedFiles = Get-ChildItem "target-signed" -Filter "*.exe" -File -Recurse
             foreach ($file in $signedFiles) {
               $targetDir = if ($file.Name -match "x86_64") { "target/x86_64-pc-windows-msvc/release" } else { "target/i686-pc-windows-msvc/release" }
               Copy-Item $file.FullName "$targetDir/$($file.Name)" -Force
             }
-            Write-Host "Using signed executables"
+            if ($signedFiles) {
+              Write-Host "Using signed executables"
+            } else {
+              Write-Host "Using unsigned executables"
+            }
           } else {
             Write-Host "Using unsigned executables"
           }
