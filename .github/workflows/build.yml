@@ -31,12 +31,9 @@ jobs:
       contents: write
       id-token: write
     env:
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-      AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-      AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
-      AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      SIGNPATH_ORG_ID: ${{ vars.SIGNPATH_ORG_ID }}
+      SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
     steps:
       - uses: actions/checkout@v4
 
@@ -60,21 +57,43 @@ jobs:
             --log-level INFO `
             main.py
 
-      - name: Sign Windows executable
-        if: ${{ env.AZURE_CLIENT_ID != '' && env.AZURE_TENANT_ID != '' && env.AZURE_TRUSTED_SIGNING_ENDPOINT != '' && env.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME != '' && env.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME != '' }}
-        uses: azure/trusted-signing-action@v0
+      - name: Upload unsigned artifact
+        id: upload-unsigned
+        if: ${{ env.SIGNPATH_API_TOKEN != '' && env.SIGNPATH_ORG_ID != '' && env.SIGNPATH_PROJECT_SLUG != '' }}
+        uses: actions/upload-artifact@v4
         with:
-          azure-client-id: ${{ env.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ env.AZURE_TENANT_ID }}
-          azure-client-secret: ${{ env.AZURE_CLIENT_SECRET }}
-          endpoint: ${{ env.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          trusted-signing-account-name: ${{ env.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
-          certificate-profile-name: ${{ env.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
-          files-folder: ${{ github.workspace }}\dist
-          files-folder-filter: DeepSeekBalanceMonitor.exe
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
+          name: unsigned-exe
+          path: dist/DeepSeekBalanceMonitor.exe
+
+      - name: Sign Windows executable
+        id: sign
+        if: ${{ env.SIGNPATH_API_TOKEN != '' && env.SIGNPATH_ORG_ID != '' && env.SIGNPATH_PROJECT_SLUG != '' }}
+        uses: signpath/github-signing-action@v1
+        with:
+          api-token: ${{ env.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORG_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: 'release'
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          timeout: 300
+
+      - name: Download signed artifact
+        if: ${{ env.SIGNPATH_API_TOKEN != '' && env.SIGNPATH_ORG_ID != '' && env.SIGNPATH_PROJECT_SLUG != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: unsigned-exe-signed
+          path: dist-signed
+
+      - name: Prepare release file
+        shell: pwsh
+        run: |
+          if (Test-Path "dist-signed/DeepSeekBalanceMonitor.exe") {
+            Copy-Item "dist-signed/DeepSeekBalanceMonitor.exe" "dist/DeepSeekBalanceMonitor.exe" -Force
+            Write-Host "Using signed executable"
+          } else {
+            Write-Host "Using unsigned executable"
+          }
 
       - name: Upload to Release
         env:

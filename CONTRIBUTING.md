@@ -143,7 +143,7 @@ DeepSeek Balance:                              ← Fixed title
 
 - **Rainmeter 小工具**：`rainmeter-widget/`，本地 HTTP 接口 `127.0.0.1:17654`，中英文双 skin，`.rmskin` CI 打包
 - **Windows 凭据管理器**：Python Windows 版使用 Windows Credential Manager 加密存储 API Key（v1.2 特性），后续版本将统一使用 SQLite 加密存储
-- **Windows 发布签名（可选）**：Azure Trusted Signing，fork 开发者自行配置
+- **Windows 发布签名（可选）**：SignPath.io（免费版，开源项目），fork 开发者自行配置，详见 [WINDOWS_CODE_SIGNING.md](WINDOWS_CODE_SIGNING.md)
 
 ### macOS / Port-Specific
 
@@ -153,6 +153,7 @@ DeepSeek Balance:                              ← Fixed title
 ### Rust / Port-Specific
 
 - **Plasma 6 小工具**（仅支持 Linux Rust）：透明玻璃风格，emoji 状态展示，配置页改用 `dsmon set` 命令
+- **Linux SHA256 校验和**：Release 中提供 `checksums.txt` 用于验证 tarball 完整性，详见 [WINDOWS_CODE_SIGNING.md](WINDOWS_CODE_SIGNING.md)
 
 ## 历史变更记录
 
