@@ -20,15 +20,13 @@ jobs:
   build:
     runs-on: windows-latest
     permissions:
+      actions: read
       contents: write
       id-token: write
     env:
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-      AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-      AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
-      AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      SIGNPATH_ORG_ID: ${{ vars.SIGNPATH_ORG_ID }}
+      SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
     defaults:
       run:
         working-directory: rust-windows
@@ -78,22 +76,44 @@ jobs:
             Copy-Item "target/$($target.Triple)/release/deepseek-balance-monitor.exe" $asset
           }
 
-      - name: Sign Windows executables
-        if: ${{ env.AZURE_CLIENT_ID != '' && env.AZURE_TENANT_ID != '' && env.AZURE_TRUSTED_SIGNING_ENDPOINT != '' && env.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME != '' && env.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME != '' }}
-        uses: azure/trusted-signing-action@v0
+      - name: Upload unsigned executables
+        id: upload-unsigned
+        if: ${{ env.SIGNPATH_API_TOKEN != '' && env.SIGNPATH_ORG_ID != '' && env.SIGNPATH_PROJECT_SLUG != '' }}
+        uses: actions/upload-artifact@v4
         with:
-          azure-client-id: ${{ env.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ env.AZURE_TENANT_ID }}
-          azure-client-secret: ${{ env.AZURE_CLIENT_SECRET }}
-          endpoint: ${{ env.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          trusted-signing-account-name: ${{ env.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
-          certificate-profile-name: ${{ env.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
-          files-folder: ${{ github.workspace }}\rust-windows\target
-          files-folder-filter: deepseek-balance-monitor-*-windows-*.exe
-          files-folder-recurse: true
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
+          name: unsigned-windows-exes
+          path: rust-windows/target/*-pc-windows-msvc/release/deepseek-balance-monitor-*-windows-*.exe
+
+      - name: Sign Windows executables
+        id: sign
+        if: ${{ env.SIGNPATH_API_TOKEN != '' && env.SIGNPATH_ORG_ID != '' && env.SIGNPATH_PROJECT_SLUG != '' }}
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ env.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORG_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: 'release'
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: rust-windows/target-signed
+
+      - name: Replace with signed executables
+        shell: pwsh
+        run: |
+          if (Test-Path "target-signed") {
+            $signedFiles = Get-ChildItem "target-signed" -Filter "*.exe" -File -Recurse
+            foreach ($file in $signedFiles) {
+              $targetDir = if ($file.Name -match "x86_64") { "target/x86_64-pc-windows-msvc/release" } else { "target/i686-pc-windows-msvc/release" }
+              Copy-Item $file.FullName "$targetDir/$($file.Name)" -Force
+            }
+            if ($signedFiles) {
+              Write-Host "Using signed executables"
+            } else {
+              Write-Host "Using unsigned executables"
+            }
+          } else {
+            Write-Host "Using unsigned executables"
+          }
 
       - name: Upload executable
         uses: actions/upload-artifact@v4

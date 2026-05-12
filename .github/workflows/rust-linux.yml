@@ -74,6 +74,14 @@ jobs:
           cp -R plasmoid/package "target/package/${package}/plasmoid"
           tar -czf "target/package/${package}.tar.gz" -C target/package "${package}"
 
+      - name: Generate SHA256 checksum
+        working-directory: rust-linux
+        run: |
+          cd target/package
+          sha256sum *.tar.gz > checksums.txt
+          echo "Generated checksums:"
+          cat checksums.txt
+
       - name: Upload tarball
         uses: actions/upload-artifact@v4
         with:
@@ -90,11 +98,16 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ steps.release_metadata.outputs.release_name }}
-          files: rust-linux/target/package/*.tar.gz
+          files: |
+            rust-linux/target/package/*.tar.gz
+            rust-linux/target/package/checksums.txt
           body: |
             ## Rust builds
             - Windows: native x86_64 and i686 executables.
             - Linux: x86_64 CLI daemon package with systemd user service and KDE Plasma widget.
             - Rainmeter: Windows desktop widget skin package.
+
+            ## Verification
+            Linux tarball SHA256 checksum: see `checksums.txt`
           generate_release_notes: true
           overwrite_files: true

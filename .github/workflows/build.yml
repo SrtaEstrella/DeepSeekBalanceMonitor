@@ -28,7 +28,13 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     permissions:
+      actions: read
       contents: write
+      id-token: write
+    env:
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      SIGNPATH_ORG_ID: ${{ vars.SIGNPATH_ORG_ID }}
+      SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
     steps:
       - uses: actions/checkout@v4
 
@@ -55,6 +61,38 @@ jobs:
       - name: Build Rainmeter skin
         continue-on-error: true
         run: powershell -ExecutionPolicy Bypass -File scripts/build_rmskin.ps1
+
+      - name: Upload unsigned artifact (SignPath)
+        id: upload-unsigned
+        if: ${{ env.SIGNPATH_API_TOKEN != '' && env.SIGNPATH_ORG_ID != '' && env.SIGNPATH_PROJECT_SLUG != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-exe
+          path: dist/DeepSeekBalanceMonitor.exe
+
+      - name: Sign Windows executable (SignPath)
+        id: sign
+        if: ${{ env.SIGNPATH_API_TOKEN != '' && env.SIGNPATH_ORG_ID != '' && env.SIGNPATH_PROJECT_SLUG != '' }}
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ env.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORG_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: 'release'
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: dist-signed
+
+      - name: Prepare release file
+        shell: pwsh
+        run: |
+          $signedFile = Get-ChildItem "dist-signed" -Filter "DeepSeekBalanceMonitor.exe" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($signedFile) {
+            Copy-Item $signedFile.FullName "dist/DeepSeekBalanceMonitor.exe" -Force
+            Write-Host "Using signed executable"
+          } else {
+            Write-Host "Using unsigned executable"
+          }
 
       - name: Upload to Release
         env:

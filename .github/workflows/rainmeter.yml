@@ -1,0 +1,100 @@
+name: Rainmeter
+
+on:
+  push:
+    branches:
+      - "main"
+      - "Rust-Dev"
+    tags:
+      - "rust-v[0-9]*"
+    paths:
+      - "rainmeter-widget/**"
+      - ".github/workflows/rainmeter.yml"
+  pull_request:
+    paths:
+      - "rainmeter-widget/**"
+      - ".github/workflows/rainmeter.yml"
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install rmskin builder
+        run: pip install rmskin-builder==2.0.4
+
+      - name: Resolve package version
+        id: package_version
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == rust-v* ]]; then
+            version="${GITHUB_REF_NAME#rust-v}"
+          else
+            version="$(sed -n 's/^version = "\(.*\)"/\1/p' rust-windows/Cargo.toml | head -1)"
+            version="${version%.0}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare Rainmeter package
+        run: |
+          package_root="target/rainmeter-package"
+          rm -rf "$package_root" target/rainmeter
+          mkdir -p "$package_root/Skins" target/rainmeter
+          cp -R rainmeter-widget/DeepSeekBalanceMonitor "$package_root/Skins/"
+          python - <<'PY'
+          from pathlib import Path
+
+          skin_root = Path("target/rainmeter-package/Skins/DeepSeekBalanceMonitor")
+          for path in skin_root.rglob("*"):
+              if path.suffix.lower() in {".ini", ".inc"}:
+                  text = path.read_text(encoding="utf-8-sig")
+                  path.write_bytes(text.encode("utf-16"))
+          PY
+          cat > "$package_root/RMSKIN.ini" <<EOF
+          [rmskin]
+          Name=DeepSeek Balance Monitor
+          Author=DeepSeekBalanceMonitor
+          Version=${{ steps.package_version.outputs.version }}
+          MinimumRainmeter=4.5
+          LoadType=Skin
+          Load=DeepSeekBalanceMonitor\DeepSeekBalanceMonitor.ini
+          EOF
+
+      - name: Build Rainmeter skin
+        id: rmskin
+        run: |
+          version="${{ steps.package_version.outputs.version }}"
+          rmskin-builder \
+            --path target/rainmeter-package \
+            --dir-out target/rainmeter \
+            --title "DeepSeek Balance Monitor" \
+            --author "DeepSeekBalanceMonitor" \
+            --version "$version"
+          asset="target/rainmeter/deepseek-balance-monitor-${version}-rainmeter.rmskin"
+          mv target/rainmeter/*.rmskin "$asset"
+          echo "asset=${asset}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Rainmeter skin
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepseek-balance-monitor-rainmeter
+          path: ${{ steps.rmskin.outputs.asset }}
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/rust-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ steps.package_version.outputs.version }}
+          files: ${{ steps.rmskin.outputs.asset }}
+          generate_release_notes: true
+          overwrite_files: true
