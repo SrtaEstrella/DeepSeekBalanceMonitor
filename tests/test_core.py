@@ -91,7 +91,7 @@ class ConfigContractTests(unittest.TestCase):
         english_line = T("bal_line", "en", balance="12.34", code="CNY",
                          topped="10.00", granted="2.34")
         self.assertEqual(english_line, "12.34 CNY (Topped 10.00, Granted 2.34)")
-        self.assertEqual(T("service_status", "en"), "DeepSeek API Status: ")
+        self.assertEqual(T("service_status", "en"), "API Status:")
 
 @unittest.skipUnless(sys.platform == "darwin", "macOS only")
 class MacKeystoreTests(unittest.TestCase):

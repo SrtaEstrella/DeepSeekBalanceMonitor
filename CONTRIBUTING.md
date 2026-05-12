@@ -114,7 +114,7 @@ DeepSeek Balance:                              ← Fixed title
 | `api_degraded_msg` | 检测到 API 服务状态异常… | API service status has changed… |
 | `api_recovered_title` | ✅ DeepSeek API 服务恢复 | ✅ DeepSeek API Recovered |
 | `api_recovered_msg` | API 服务已恢复正常。 | API service is back to normal. |
-| `service_status` | DeepSeek API 服务状态： | DeepSeek API Status: |
+| `service_status` | API 服务状态： | API Status: |
 | `status_none` | 服务正常 | All Systems Operational |
 | `status_minor` | 轻微异常 | Minor Outage |
 | `status_major` | 严重异常 | Major Outage |
