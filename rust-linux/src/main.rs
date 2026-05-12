@@ -46,6 +46,8 @@ struct AppConfig {
     export_path: String,
     #[serde(default)]
     http_proxy: String,
+    #[serde(default)]
+    proxy_enabled: bool,
     #[serde(default = "default_theme")]
     theme: String,
     #[serde(default)]
@@ -70,6 +72,7 @@ impl Default for AppConfig {
             retention_days: default_retention_days(),
             export_path: String::new(),
             http_proxy: String::new(),
+            proxy_enabled: false,
             theme: default_theme(),
             icon_colors: BTreeMap::new(),
             icon_stroke: false,
@@ -138,6 +141,7 @@ struct WidgetStatus {
     threshold_yuan: f64,
     api_alert_enabled: bool,
     retention_days: u64,
+    proxy_enabled: bool,
     language: String,
     ui_language: String,
     theme: String,
@@ -177,32 +181,6 @@ struct ApiBalanceInfo {
     granted_balance: String,
     #[serde(default)]
     topped_up_balance: String,
-}
-
-#[derive(Deserialize, Default)]
-struct StatusInfo {
-    #[serde(default)]
-    indicator: String,
-}
-
-#[derive(Deserialize)]
-struct StatusPayload {
-    #[serde(default)]
-    status: StatusInfo,
-}
-
-#[derive(Deserialize)]
-struct ComponentsPayload {
-    #[serde(default)]
-    components: Vec<ComponentStatus>,
-}
-
-#[derive(Deserialize)]
-struct ComponentStatus {
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    status: String,
 }
 
 fn main() {
@@ -264,7 +242,7 @@ fn check_once() -> Result<(), (i32, String)> {
         log_line("Demo balance check succeeded").map_err(fail)?;
         return Ok(());
     }
-    let service_status = fetch_service_status(&config.http_proxy);
+    let service_status = fetch_service_status(effective_http_proxy(&config));
     if key.is_empty() {
         ensure_config_file().map_err(fail)?;
         print_status(
@@ -277,7 +255,7 @@ fn check_once() -> Result<(), (i32, String)> {
         return Err((2, String::new()));
     }
     let api_key = key.chars().filter(|c| c.is_ascii()).collect::<String>();
-    match fetch_balance(&api_key, &config.http_proxy) {
+    match fetch_balance(&api_key, effective_http_proxy(&config)) {
         Ok(balances) => {
             save_balance_history(&balances, &service_status).map_err(fail)?;
             print_status(
@@ -335,7 +313,7 @@ fn run_daemon() -> Result<(), (i32, String)> {
         let service_status = if demo_mode {
             "none".to_string()
         } else {
-            fetch_service_status(&config.http_proxy)
+            fetch_service_status(effective_http_proxy(&config))
         };
         if !last_service_status.is_empty() && service_status != last_service_status {
             log_line(&format!(
@@ -350,7 +328,7 @@ fn run_daemon() -> Result<(), (i32, String)> {
             demo::prepare(&conn).map_err(fail)?;
             demo::balances(&conn)
         } else {
-            fetch_balance(&api_key, &config.http_proxy)
+            fetch_balance(&api_key, effective_http_proxy(&config))
         };
         match balance_result {
             Ok(balances) => {
@@ -448,7 +426,7 @@ fn print_widget_status() -> Result<(), (i32, String)> {
     let service_status = if demo_mode {
         "none".to_string()
     } else {
-        fetch_service_status(&config.http_proxy)
+        fetch_service_status(effective_http_proxy(&config))
     };
     let service_degraded = is_service_degraded(&service_status);
     let latest_consumption_rate = if let Some(conn) = demo_conn.as_ref() {
@@ -472,6 +450,7 @@ fn print_widget_status() -> Result<(), (i32, String)> {
             threshold_yuan: config.threshold_yuan,
             api_alert_enabled: config.api_alert_enabled,
             retention_days: config.retention_days,
+            proxy_enabled: config.proxy_enabled,
             language: config.language.clone(),
             ui_language: config.ui_language.clone(),
             theme: config.theme.clone(),
@@ -503,6 +482,7 @@ fn print_widget_status() -> Result<(), (i32, String)> {
             threshold_yuan: config.threshold_yuan,
             api_alert_enabled: config.api_alert_enabled,
             retention_days: config.retention_days,
+            proxy_enabled: config.proxy_enabled,
             language: config.language.clone(),
             ui_language: config.ui_language.clone(),
             theme: config.theme.clone(),
@@ -520,7 +500,7 @@ fn print_widget_status() -> Result<(), (i32, String)> {
         });
     }
     let api_key = key.chars().filter(|c| c.is_ascii()).collect::<String>();
-    match fetch_balance(&api_key, &config.http_proxy) {
+    match fetch_balance(&api_key, effective_http_proxy(&config)) {
         Ok(balances) => {
             save_balance_history(&balances, &service_status).map_err(fail)?;
             let (total_currency, total_balance) = preferred_balance(&balances)
@@ -536,6 +516,7 @@ fn print_widget_status() -> Result<(), (i32, String)> {
                 threshold_yuan: config.threshold_yuan,
                 api_alert_enabled: config.api_alert_enabled,
                 retention_days: config.retention_days,
+                proxy_enabled: config.proxy_enabled,
                 language: config.language.clone(),
                 ui_language: config.ui_language.clone(),
                 theme: config.theme.clone(),
@@ -570,6 +551,7 @@ fn print_widget_status() -> Result<(), (i32, String)> {
                     threshold_yuan: config.threshold_yuan,
                     api_alert_enabled: config.api_alert_enabled,
                     retention_days: config.retention_days,
+                    proxy_enabled: config.proxy_enabled,
                     language: config.language.clone(),
                     ui_language: config.ui_language.clone(),
                     theme: config.theme.clone(),
@@ -598,6 +580,7 @@ fn print_widget_status() -> Result<(), (i32, String)> {
                     threshold_yuan: config.threshold_yuan,
                     api_alert_enabled: config.api_alert_enabled,
                     retention_days: config.retention_days,
+                    proxy_enabled: config.proxy_enabled,
                     language: config.language.clone(),
                     ui_language: config.ui_language.clone(),
                     theme: config.theme.clone(),
@@ -818,14 +801,14 @@ fn consumption_rate(hours: i64) -> Result<Option<ConsumptionRate>, String> {
 }
 
 fn consumption_rate_with_fallback(retention_days: u64) -> Result<Option<ConsumptionRate>, String> {
-    if let Some(rate) = consumption_rate(24)? {
+    if let Some(rate) = consumption_rate(7 * 24)? {
         return Ok(Some(rate));
     }
     let fallback_hours = retention_days
         .max(1)
         .saturating_mul(24)
         .min(i64::MAX as u64) as i64;
-    if fallback_hours <= 24 {
+    if fallback_hours <= 7 * 24 {
         return Ok(None);
     }
     consumption_rate(fallback_hours)
@@ -838,11 +821,11 @@ fn consumption_rate_from_records(
         return Ok(None);
     }
     let mut intervals = Vec::new();
-    let mut start_total = records[0].total;
+    let mut start_total = records[0].topped;
     let mut start_time = records[0].timestamp.as_str();
     let mut previous_total = start_total;
     for index in 1..records.len() {
-        let current_total = records[index].total;
+        let current_total = records[index].topped;
         if current_total > previous_total {
             intervals.push((
                 start_total,
@@ -887,7 +870,7 @@ fn consumption_rate_from_records(
     let latest = records.last().expect("records length already checked");
     Ok(Some(ConsumptionRate {
         daily_rate,
-        hours_left: latest.total / daily_rate * 24.0,
+        hours_left: latest.topped / daily_rate * 24.0,
         currency: latest.currency.clone(),
     }))
 }
@@ -942,7 +925,7 @@ fn set_key(args: &[String]) -> Result<(), (i32, String)> {
 fn set_config_field(args: &[String]) -> Result<(), (i32, String)> {
     if args.len() < 2 {
         return Err(fail(
-            "Usage: dsmon set <field> <value>\nFields: interval, threshold, ui-language, auto-start, alert-mode, api-alert-enabled, retention-days, export-path, http-proxy, theme, icon-stroke, icon-colors, color-ok, color-low, color-degraded, color-nodata",
+            "Usage: dsmon set <field> <value>\nFields: interval, threshold, ui-language, auto-start, alert-mode, api-alert-enabled, retention-days, export-path, http-proxy, proxy-enabled, theme, icon-stroke, icon-colors, color-ok, color-low, color-degraded, color-nodata",
         ));
     }
     let mut config = load_config().unwrap_or_default();
@@ -1013,6 +996,9 @@ fn apply_config_field(
         }
         "http-proxy" | "http_proxy" | "proxy" => {
             config.http_proxy = value.to_string();
+        }
+        "proxy-enabled" | "proxy_enabled" => {
+            config.proxy_enabled = parse_bool_arg(value)?;
         }
         "theme" => {
             config.theme = parse_theme_arg(value)?;
@@ -1163,13 +1149,9 @@ fn fetch_service_status(http_proxy: &str) -> String {
     let Ok(client) = http_client(Duration::from_secs(10), http_proxy) else {
         return "unknown".to_string();
     };
-    let mut status = fetch_overall_status(&client).unwrap_or("unknown");
-    if let Some(api_status) = fetch_api_component_status(&client) {
-        if status_rank(api_status) > status_rank(status) {
-            status = api_status;
-        }
-    }
-    status.to_string()
+    fetch_flashduty_api_status(&client)
+        .unwrap_or("unknown")
+        .to_string()
 }
 
 fn http_client(timeout: Duration, http_proxy: &str) -> Result<reqwest::blocking::Client, String> {
@@ -1181,35 +1163,52 @@ fn http_client(timeout: Duration, http_proxy: &str) -> Result<reqwest::blocking:
     builder.build().map_err(|e| e.to_string())
 }
 
-fn fetch_overall_status(client: &reqwest::blocking::Client) -> Option<&'static str> {
-    let payload: StatusPayload = client
-        .get("https://status.deepseek.com/api/v2/status.json")
-        .header("Accept", "application/json")
-        .send()
-        .ok()?
-        .error_for_status()
-        .ok()?
-        .json()
-        .ok()?;
-    Some(normalize_service_status(&payload.status.indicator))
+fn effective_http_proxy(config: &AppConfig) -> &str {
+    if config.proxy_enabled {
+        config.http_proxy.trim()
+    } else {
+        ""
+    }
 }
 
-fn fetch_api_component_status(client: &reqwest::blocking::Client) -> Option<&'static str> {
-    let payload: ComponentsPayload = client
-        .get("https://status.deepseek.com/api/v2/components.json")
-        .header("Accept", "application/json")
+fn fetch_flashduty_api_status(client: &reqwest::blocking::Client) -> Option<&'static str> {
+    let html = client
+        .get("https://status.flashcat.cloud/deepseek")
+        .header("Accept", "text/html,*/*")
+        .header("User-Agent", "Mozilla/5.0")
         .send()
         .ok()?
         .error_for_status()
         .ok()?
-        .json()
+        .text()
         .ok()?;
-    payload
-        .components
-        .into_iter()
-        .filter(|item| item.name.to_ascii_lowercase().contains("api"))
-        .map(|item| normalize_service_status(&item.status))
+    Some(parse_flashduty_api_status(&html))
+}
+
+fn parse_flashduty_api_status(html: &str) -> &'static str {
+    let full = html.replace("\\\"", "\"");
+    full.split("\"name\"")
+        .skip(1)
+        .filter_map(|part| {
+            let name = json_string_after_key(part, "")?;
+            if name.to_ascii_lowercase().contains("api") {
+                json_string_after_key(part, "\"status\"").map(normalize_service_status)
+            } else {
+                None
+            }
+        })
         .max_by_key(|status| status_rank(status))
+        .unwrap_or("none")
+}
+
+fn json_string_after_key<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    let text = if key.is_empty() {
+        text
+    } else {
+        &text[text.find(key)? + key.len()..]
+    };
+    let start = text[text.find(':')? + 1..].trim_start().strip_prefix('"')?;
+    start.split('"').next()
 }
 
 fn print_status(
@@ -1291,9 +1290,9 @@ fn is_service_degraded(status: &str) -> bool {
 fn normalize_service_status(value: &str) -> &'static str {
     match value {
         "none" | "operational" => "none",
-        "minor" | "degraded_performance" => "minor",
+        "minor" | "degraded" | "degraded_performance" => "minor",
         "major" | "partial_outage" => "major",
-        "critical" | "major_outage" => "critical",
+        "critical" | "full_outage" | "major_outage" => "critical",
         "maintenance" | "under_maintenance" => "maintenance",
         _ => "unknown",
     }
@@ -1958,16 +1957,7 @@ fn default_lang() -> String {
 }
 
 fn default_ui_lang() -> String {
-    let locale = ["LC_ALL", "LC_MESSAGES", "LANG"]
-        .iter()
-        .filter_map(|key| std::env::var(key).ok())
-        .map(|value| value.trim().to_string())
-        .find(|value| !value.is_empty());
-    match locale {
-        Some(value) if value.to_ascii_lowercase().starts_with("zh") => "zh".to_string(),
-        Some(_) => "en".to_string(),
-        None => "zh".to_string(),
-    }
+    "zh".to_string()
 }
 
 fn default_api_alert_enabled() -> bool {
@@ -2081,10 +2071,11 @@ mod tests {
 
         let qml = include_str!("../plasmoid/package/contents/ui/main.qml");
         assert!(qml.contains("function estimatedAvailabilityText()"));
+        assert!(qml.contains("function rainmeterBalanceLine()"));
         assert!(qml.contains("function relativeLastCheck()"));
         assert!(qml.contains("lines.push(\"💰 \""));
         assert!(qml.contains("lines.push(\"📡 \""));
-        assert!(qml.contains("text: \"📊 \" + root.estimatedAvailabilityText()"));
+        assert!(qml.contains("text: root.rainmeterEstimatedLine()"));
         assert!(!qml.contains("text: tr(\"balances\")"));
         assert!(!qml.contains("model: Object.keys(root.balances)"));
 

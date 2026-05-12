@@ -5,7 +5,7 @@
   <kcfgfile name=""/>
   <group name="General">
     <entry name="language" type="String">
-      <default>en</default>
+      <default>zh</default>
     </entry>
   </group>
 </kcfg>

@@ -231,6 +231,8 @@ mod windows_app {
         export_path: String,
         #[serde(default)]
         http_proxy: String,
+        #[serde(default)]
+        proxy_enabled: bool,
         #[serde(default = "default_theme")]
         theme: String,
         #[serde(default)]
@@ -255,6 +257,7 @@ mod windows_app {
                 retention_days: default_retention_days(),
                 export_path: String::new(),
                 http_proxy: String::new(),
+                proxy_enabled: false,
                 theme: default_theme(),
                 icon_colors: BTreeMap::new(),
                 icon_stroke: false,
@@ -415,32 +418,6 @@ mod windows_app {
         granted_balance: String,
         #[serde(default)]
         topped_up_balance: String,
-    }
-
-    #[derive(Deserialize, Default)]
-    struct StatusInfo {
-        #[serde(default)]
-        indicator: String,
-    }
-
-    #[derive(Deserialize)]
-    struct StatusPayload {
-        #[serde(default)]
-        status: StatusInfo,
-    }
-
-    #[derive(Deserialize)]
-    struct ComponentsPayload {
-        #[serde(default)]
-        components: Vec<ComponentStatus>,
-    }
-
-    #[derive(Deserialize)]
-    struct ComponentStatus {
-        #[serde(default)]
-        name: String,
-        #[serde(default)]
-        status: String,
     }
 
     fn default_currency() -> String {
@@ -990,7 +967,7 @@ mod windows_app {
             let service_status = if demo_mode {
                 "none".to_string()
             } else {
-                fetch_service_status(&config.http_proxy)
+                fetch_service_status(effective_http_proxy(&config))
             };
             let balance = if config.api_key.trim().is_empty() {
                 Err("No API Key configured".to_string())
@@ -1000,7 +977,7 @@ mod windows_app {
                     demo::balances(&conn)
                 })
             } else {
-                fetch_balance(&config.api_key, &config.http_proxy)
+                fetch_balance(&config.api_key, effective_http_proxy(&config))
             };
             if !demo_mode {
                 if let Ok(balances) = &balance {
@@ -1271,7 +1248,7 @@ mod windows_app {
         retention_input: nwg::TextInput,
         _export_path_label: nwg::Label,
         export_path_input: nwg::TextInput,
-        _proxy_label: nwg::Label,
+        proxy_enabled: nwg::CheckBox,
         proxy_input: nwg::TextInput,
         _theme_label: nwg::Label,
         theme_combo: nwg::ComboBox<&'static str>,
@@ -1322,7 +1299,7 @@ mod windows_app {
             let mut retention_input = Default::default();
             let mut export_path_label = Default::default();
             let mut export_path_input = Default::default();
-            let mut proxy_label = Default::default();
+            let mut proxy_enabled = Default::default();
             let mut proxy_input = Default::default();
             let mut theme_label = Default::default();
             let mut theme_combo = Default::default();
@@ -1468,14 +1445,20 @@ mod windows_app {
                 .size((100, 28))
                 .parent(&general_tab)
                 .build(&mut retention_input)?;
-            nwg::Label::builder()
-                .text(tr(lang, "proxy_label"))
+            nwg::CheckBox::builder()
+                .text(tr(lang, "proxy_enable"))
                 .position((20, 387))
-                .size((220, 22))
+                .size((220, 24))
                 .parent(&general_tab)
-                .build(&mut proxy_label)?;
+                .check_state(if config.proxy_enabled {
+                    checked
+                } else {
+                    unchecked
+                })
+                .build(&mut proxy_enabled)?;
             nwg::TextInput::builder()
                 .text(&config.http_proxy)
+                .placeholder_text(Some(tr(lang, "proxy_placeholder")))
                 .position((250, 383))
                 .size((230, 28))
                 .parent(&general_tab)
@@ -1579,11 +1562,10 @@ mod windows_app {
                 })
                 .build(&mut api_alerts)?;
 
-            let status = app.status_line();
             nwg::Label::builder()
-                .text(&status)
+                .text("")
                 .position((20, 586))
-                .size((460, 38))
+                .size((0, 0))
                 .parent(&general_tab)
                 .build(&mut status_label)?;
             let history_text = format_history_view(lang, config.retention_days, None);
@@ -1673,7 +1655,7 @@ mod windows_app {
                 retention_input,
                 _export_path_label: export_path_label,
                 export_path_input,
-                _proxy_label: proxy_label,
+                proxy_enabled,
                 proxy_input,
                 _theme_label: theme_label,
                 theme_combo,
@@ -1857,6 +1839,7 @@ mod windows_app {
             config.retention_days = retention_days;
             config.export_path = self.export_path_input.text().trim().to_string();
             config.http_proxy = self.proxy_input.text().trim().to_string();
+            config.proxy_enabled = self.proxy_enabled.check_state() == nwg::CheckBoxState::Checked;
             config.theme = match self.theme_combo.selection() {
                 Some(1) => "contrast",
                 Some(2) => "bright",
@@ -1891,28 +1874,7 @@ mod windows_app {
         }
     }
 
-    impl AppUi {
-        fn status_line(&self) -> String {
-            let state = self.state.lock().unwrap();
-            let lang = state.config.ui_language.as_str();
-            let last = state
-                .last_check
-                .map(|v| v.format("%Y-%m-%d %H:%M:%S").to_string())
-                .unwrap_or_else(|| tr(lang, "not_checked").to_string());
-            if let Some((code, balance)) = preferred_balance(&state.balances) {
-                format!(
-                    "{}: {} | {}: {} {}",
-                    tr(lang, "last_check"),
-                    last,
-                    tr(lang, "total_balance"),
-                    format_amount(balance.total_balance),
-                    code
-                )
-            } else {
-                format!("{}: {}", tr(lang, "last_check"), last)
-            }
-        }
-    }
+    impl AppUi {}
 
     fn fetch_balance(api_key: &str, http_proxy: &str) -> Result<BTreeMap<String, Balance>, String> {
         let client = http_client(Duration::from_secs(15), http_proxy)?;
@@ -1956,23 +1918,13 @@ mod windows_app {
                 return "unknown".to_string();
             }
         };
-        let mut status = match fetch_overall_status(&client) {
+        match fetch_flashduty_api_status(&client) {
             Ok(status) => status,
             Err(error) => {
-                log_line(&format!("API status overall check failed: {error}"));
-                "unknown"
+                log_line(&format!("API status check failed: {error}"));
+                "unknown".to_string()
             }
-        };
-        match fetch_api_component_status(&client) {
-            Ok(Some(api_status)) => {
-                if status == "unknown" || status_rank(api_status) > status_rank(status) {
-                    status = api_status;
-                }
-            }
-            Ok(None) => {}
-            Err(error) => log_line(&format!("API status component check failed: {error}")),
         }
-        status.to_string()
     }
 
     fn http_client(
@@ -1987,39 +1939,53 @@ mod windows_app {
         builder.build().map_err(|e| e.to_string())
     }
 
-    fn fetch_overall_status(client: &reqwest::blocking::Client) -> Result<&'static str, String> {
-        let response = client
-            .get("https://status.deepseek.com/api/v2/status.json")
-            .header("Accept", "application/json")
-            .send()
-            .map_err(|e| format!("request failed: {e}"))?;
-        let payload: StatusPayload = response
-            .error_for_status()
-            .map_err(|e| format!("HTTP status failed: {e}"))?
-            .json()
-            .map_err(|e| format!("JSON parse failed: {e}"))?;
-        Ok(normalize_service_status(&payload.status.indicator))
+    fn effective_http_proxy(config: &AppConfig) -> &str {
+        if config.proxy_enabled {
+            config.http_proxy.trim()
+        } else {
+            ""
+        }
     }
 
-    fn fetch_api_component_status(
-        client: &reqwest::blocking::Client,
-    ) -> Result<Option<&'static str>, String> {
+    fn fetch_flashduty_api_status(client: &reqwest::blocking::Client) -> Result<String, String> {
         let response = client
-            .get("https://status.deepseek.com/api/v2/components.json")
-            .header("Accept", "application/json")
+            .get("https://status.flashcat.cloud/deepseek")
+            .header("Accept", "text/html,*/*")
+            .header("User-Agent", "Mozilla/5.0")
             .send()
             .map_err(|e| format!("request failed: {e}"))?;
-        let payload: ComponentsPayload = response
+        let html = response
             .error_for_status()
             .map_err(|e| format!("HTTP status failed: {e}"))?
-            .json()
-            .map_err(|e| format!("JSON parse failed: {e}"))?;
-        Ok(payload
-            .components
-            .into_iter()
-            .filter(|item| item.name.to_ascii_lowercase().contains("api"))
-            .map(|item| normalize_service_status(&item.status))
-            .max_by_key(|status| status_rank(status)))
+            .text()
+            .map_err(|e| format!("HTML parse failed: {e}"))?;
+        Ok(parse_flashduty_api_status(&html).to_string())
+    }
+
+    fn parse_flashduty_api_status(html: &str) -> &'static str {
+        let full = html.replace("\\\"", "\"");
+        full.split("\"name\"")
+            .skip(1)
+            .filter_map(|part| {
+                let name = json_string_after_key(part, "")?;
+                if name.to_ascii_lowercase().contains("api") {
+                    json_string_after_key(part, "\"status\"").map(normalize_service_status)
+                } else {
+                    None
+                }
+            })
+            .max_by_key(|status| status_rank(status))
+            .unwrap_or("none")
+    }
+
+    fn json_string_after_key<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+        let text = if key.is_empty() {
+            text
+        } else {
+            &text[text.find(key)? + key.len()..]
+        };
+        let start = text[text.find(':')? + 1..].trim_start().strip_prefix('"')?;
+        start.split('"').next()
     }
 
     fn parse_amount(value: &str) -> f64 {
@@ -2045,9 +2011,9 @@ mod windows_app {
     fn normalize_service_status(value: &str) -> &'static str {
         match value {
             "none" | "operational" => "none",
-            "minor" | "degraded_performance" => "minor",
+            "minor" | "degraded" | "degraded_performance" => "minor",
             "major" | "partial_outage" => "major",
-            "critical" | "major_outage" => "critical",
+            "critical" | "full_outage" | "major_outage" => "critical",
             "maintenance" | "under_maintenance" => "maintenance",
             _ => "unknown",
         }
@@ -2860,14 +2826,14 @@ mod windows_app {
     fn consumption_rate_with_fallback(
         retention_days: u64,
     ) -> Result<Option<ConsumptionRate>, String> {
-        if let Some(rate) = consumption_rate(24)? {
+        if let Some(rate) = consumption_rate(7 * 24)? {
             return Ok(Some(rate));
         }
         let fallback_hours = retention_days
             .max(1)
             .saturating_mul(24)
             .min(i64::MAX as u64) as i64;
-        if fallback_hours <= 24 {
+        if fallback_hours <= 7 * 24 {
             return Ok(None);
         }
         consumption_rate(fallback_hours)
@@ -2880,11 +2846,11 @@ mod windows_app {
             return Ok(None);
         }
         let mut intervals = Vec::new();
-        let mut start_total = records[0].total;
+        let mut start_total = records[0].topped;
         let mut start_time = records[0].timestamp.as_str();
         let mut previous_total = start_total;
         for index in 1..records.len() {
-            let current_total = records[index].total;
+            let current_total = records[index].topped;
             if current_total > previous_total {
                 intervals.push((
                     start_total,
@@ -2931,7 +2897,7 @@ mod windows_app {
         let latest = records.last().expect("records length already checked");
         Ok(Some(ConsumptionRate {
             daily_rate,
-            hours_left: latest.total / daily_rate * 24.0,
+            hours_left: latest.topped / daily_rate * 24.0,
             currency: latest.currency.clone(),
         }))
     }
@@ -3320,7 +3286,7 @@ mod windows_app {
             ("en", "top_up") => "Top Up",
             ("en", "settings") => "Settings...",
             ("en", "quit") => "Quit",
-            ("en", "settings_title") => "DeepSeek Balance Monitor - Settings",
+            ("en", "settings_title") => "⚙️ Settings",
             ("en", "settings_tab") => "Settings",
             ("en", "history_tab") => "History",
             ("en", "api_key_label") => "DeepSeek API Key:",
@@ -3337,6 +3303,8 @@ mod windows_app {
             ("en", "retention_label") => "Log & record retention (days):",
             ("en", "export_path_label") => "Export path:",
             ("en", "proxy_label") => "HTTP/HTTPS proxy:",
+            ("en", "proxy_enable") => "Enable HTTP/HTTPS proxy",
+            ("en", "proxy_placeholder") => "Proxy address",
             ("en", "theme_label") => "Icon theme:",
             ("en", "theme_default") => "Default",
             ("en", "theme_contrast") => "High Contrast",
@@ -3423,7 +3391,7 @@ mod windows_app {
             (_, "top_up") => "充值",
             (_, "settings") => "设置...",
             (_, "quit") => "退出",
-            (_, "settings_title") => "DeepSeek Balance Monitor - 设置",
+            (_, "settings_title") => "⚙️ 设置",
             (_, "settings_tab") => "设置",
             (_, "history_tab") => "历史",
             (_, "api_key_label") => "DeepSeek API Key:",
@@ -3440,6 +3408,8 @@ mod windows_app {
             (_, "retention_label") => "日志和记录保留天数：",
             (_, "export_path_label") => "数据导出路径：",
             (_, "proxy_label") => "HTTP/HTTPS 代理：",
+            (_, "proxy_enable") => "启用 HTTP/HTTPS 代理",
+            (_, "proxy_placeholder") => "代理地址",
             (_, "theme_label") => "图标主题：",
             (_, "theme_default") => "默认",
             (_, "theme_contrast") => "高对比",

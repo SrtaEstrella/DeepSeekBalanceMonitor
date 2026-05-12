@@ -63,7 +63,7 @@ PlasmoidItem {
         ? Kirigami.Theme.negativeTextColor
         : (serviceDegraded ? warmGray : Kirigami.Theme.positiveTextColor)
     readonly property string balanceNumberColor: iconFill
-    readonly property string iconFill: checking ? iconColor("nodata") : (daemonChecked && !daemonRunning ? iconColor("low") : (ok ? (serviceDegraded ? iconColor("degraded") : (lowBalance ? iconColor("low") : iconColor("ok"))) : iconColor(configured ? "low" : "nodata")))
+    readonly property string iconFill: checking ? iconColor("nodata") : (daemonChecked && !daemonRunning ? iconColor("low") : (ok ? (lowBalance ? iconColor("low") : (serviceDegraded ? iconColor("degraded") : iconColor("ok"))) : iconColor(configured ? "low" : "nodata")))
     readonly property color iconTextColor: textColor(iconFill)
 
     function runCommand(command) {
@@ -149,6 +149,7 @@ PlasmoidItem {
             queryError: "查询出错",
             notChecked: "尚未查询",
             serviceStatus: "DeepSeek API 服务状态：",
+            rainmeterServiceLabel: "API 服务状态",
             serviceNormal: "服务正常",
             statusMinor: "轻微异常",
             statusMajor: "严重异常",
@@ -171,7 +172,11 @@ PlasmoidItem {
             balanceErrorTitle: "余额查询失败",
             daemonStopped: "dsmon 后台进程未运行，请启动 dsmon.service。",
             dailyRate: "日均消耗",
-            estimated: "预计可用"
+            estimated: "预计可用",
+            fallbackBalanceLine: "⚠ 请打开原进程",
+            fallbackLastCheck: "尚未查询",
+            fallbackServiceStatusLine: "⚪ 未连接",
+            fallbackEstimatedLine: "📊 等待数据"
         }
         var en = {
             title: "DeepSeek Balance Monitor",
@@ -193,6 +198,7 @@ PlasmoidItem {
             queryError: "Query error",
             notChecked: "Not checked",
             serviceStatus: "DeepSeek API Status:",
+            rainmeterServiceLabel: "API Status",
             serviceNormal: "All Systems Operational",
             statusMinor: "Minor Outage",
             statusMajor: "Major Outage",
@@ -215,7 +221,11 @@ PlasmoidItem {
             balanceErrorTitle: "Balance check failed",
             daemonStopped: "dsmon background process is not running. Start dsmon.service.",
             dailyRate: "Avg",
-            estimated: "Est."
+            estimated: "Est.",
+            fallbackBalanceLine: "⚠ Open the main app",
+            fallbackLastCheck: "Not checked",
+            fallbackServiceStatusLine: "⚪ Not Connected",
+            fallbackEstimatedLine: "📊 Waiting for data"
         }
         var table = language === "zh" ? zh : en
         return table[key] || key
@@ -375,6 +385,28 @@ PlasmoidItem {
         return language === "zh"
             ? tr("estimated") + " " + daysLeft + " 天 " + hoursRemainder + " 小时"
             : tr("estimated") + " " + daysLeft + "d " + hoursRemainder + "h remaining"
+    }
+
+    function rainmeterBalanceLine() {
+        if (daemonChecked && !daemonRunning) {
+            return tr("fallbackBalanceLine")
+        }
+        if (ok) {
+            return "💰 " + totalBalance + " " + totalCurrency
+        }
+        return "💰 -- CNY"
+    }
+
+    function rainmeterLastValue() {
+        return daemonChecked && !daemonRunning ? tr("fallbackLastCheck") : relativeLastCheck()
+    }
+
+    function rainmeterServiceValue() {
+        return daemonChecked && !daemonRunning ? tr("fallbackServiceStatusLine") : serviceStatusMarkup()
+    }
+
+    function rainmeterEstimatedLine() {
+        return daemonChecked && !daemonRunning ? tr("fallbackEstimatedLine") : "📊 " + estimatedAvailabilityText()
     }
 
     function balanceMessage() {
@@ -653,8 +685,7 @@ PlasmoidItem {
 
                 PlasmaExtras.ShadowedLabel {
                     Layout.fillWidth: true
-                    text: "💰 " + root.coloredNumber(root.totalBalance) + " " + root.htmlEscape(root.totalCurrency)
-                    textFormat: Text.RichText
+                    text: root.rainmeterBalanceLine()
                     color: root.glassTextColor
                     font.bold: true
                     font.pointSize: root.balanceTextPointSize
@@ -687,9 +718,11 @@ PlasmoidItem {
 
             PlasmaExtras.ShadowedLabel {
                 Layout.fillWidth: true
-                text: root.statusLine
+                visible: false
+                text: ""
                 color: root.glassTextColor
                 font.pointSize: 11
+                Layout.preferredHeight: 0
                 wrapMode: Text.WordWrap
                 maximumLineCount: 2
                 elide: Text.ElideRight
@@ -702,19 +735,19 @@ PlasmoidItem {
                 columnSpacing: Kirigami.Units.largeSpacing
 
                 PlasmaExtras.ShadowedLabel {
-                    text: "🕐 " + tr("lastCheck")
+                    text: "🕐 " + tr("lastCheck") + root.labelSeparator()
                     color: root.glassTextColor
                     font.pointSize: 10
                 }
                 PlasmaExtras.ShadowedLabel {
                     Layout.fillWidth: true
-                    text: root.lastCheck
+                    text: root.rainmeterLastValue()
                     color: root.glassTextColor
                     font.pointSize: 10
                     elide: Text.ElideRight
                 }
                 PlasmaExtras.ShadowedLabel {
-                    text: "📡 " + tr("serviceStatus")
+                    text: "📡 " + tr("rainmeterServiceLabel") + root.labelSeparator()
                     color: root.glassTextColor
                     font.pointSize: 10
                 }
@@ -724,7 +757,7 @@ PlasmoidItem {
 
                     PlasmaExtras.ShadowedLabel {
                         Layout.fillWidth: true
-                        text: root.serviceStatusEmoji() + " " + root.serviceStatusText()
+                        text: root.rainmeterServiceValue()
                         color: root.glassTextColor
                         font.pointSize: 10
                         elide: Text.ElideRight
@@ -734,7 +767,7 @@ PlasmoidItem {
 
             PlasmaExtras.ShadowedLabel {
                 Layout.fillWidth: true
-                text: "📊 " + root.estimatedAvailabilityText()
+                text: root.rainmeterEstimatedLine()
                 color: root.glassTextColor
                 font.bold: true
                 font.pointSize: root.balanceTextPointSize

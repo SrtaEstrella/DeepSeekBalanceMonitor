@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: Install build dependencies
-        run: dnf -y install binutils ca-certificates curl file gcc git gzip tar xz
+        run: dnf -y install binutils ca-certificates curl file gcc git gzip tar xz zip
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -58,7 +58,7 @@ jobs:
           file target/release/dsmon
           objdump -T target/release/dsmon | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1 || true
 
-      - name: Create tarball
+      - name: Create release packages
         working-directory: rust-linux
         run: |
           if [[ "${GITHUB_REF_NAME}" == rust-v* ]]; then
@@ -73,6 +73,8 @@ jobs:
           cp package/install.sh package/uninstall.sh package/dsmon.service "target/package/${package}/"
           cp -R plasmoid/package "target/package/${package}/plasmoid"
           tar -czf "target/package/${package}.tar.gz" -C target/package "${package}"
+          plasmoid="deepseek-balance-monitor-${version}-plasmoid.plasmoid"
+          (cd plasmoid/package && zip -qr "../../target/package/${plasmoid}" .)
 
       - name: Generate SHA256 checksum
         working-directory: rust-linux
@@ -82,10 +84,10 @@ jobs:
           echo "Generated checksums:"
           cat checksums.txt
 
-      - name: Upload tarball
+      - name: Upload Linux packages
         uses: actions/upload-artifact@v4
         with:
-          name: deepseek-balance-monitor-linux-x86_64
+          name: deepseek-balance-monitor-linux
           path: rust-linux/target/package/*.tar.gz
 
       - name: Prepare release metadata
@@ -100,6 +102,7 @@ jobs:
           name: ${{ steps.release_metadata.outputs.release_name }}
           files: |
             rust-linux/target/package/*.tar.gz
+            rust-linux/target/package/*.plasmoid
             rust-linux/target/package/checksums.txt
           body: |
             ## Rust builds

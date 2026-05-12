@@ -8,17 +8,18 @@ import org.kde.plasma.plasma5support as Plasma5Support
 KCM.SimpleKCM {
     id: page
 
-    property string cfg_language: systemLanguage()
-    property string cfg_languageDefault: systemLanguage()
+    property string cfg_language: "zh"
+    property string cfg_languageDefault: "zh"
     property bool cfg_expanding: false
     property int cfg_length: 0
     property string statusText: ""
     property bool busy: false
+    property bool loadingConfig: true
     property bool hasStoredApiKey: false
     property string loadedApiKey: ""
     property bool savingBatch: false
     property var saveCommands: []
-    readonly property string uiLanguage: languageCombo.currentValue || systemLanguage()
+    readonly property string uiLanguage: normalizedLanguage(cfg_language)
 
     function shellQuote(value) {
         return "'" + String(value).replace(/'/g, "'\\''") + "'"
@@ -55,6 +56,16 @@ KCM.SimpleKCM {
         return String(localeName).indexOf("zh") === 0 ? "zh" : "en"
     }
 
+    function normalizedLanguage(value) {
+        return value === "zh" || value === "en" ? value : "zh"
+    }
+
+    onCfg_languageChanged: {
+        if (!loadingConfig && (cfg_language === "zh" || cfg_language === "en")) {
+            runCommand("/usr/local/bin/dsmon set " + shellQuote("ui-language") + " " + shellQuote(cfg_language))
+        }
+    }
+
     function tr(key) {
         var zh = {
             loading: "正在加载...",
@@ -83,6 +94,8 @@ KCM.SimpleKCM {
             logRetention: "日志和记录保留天数：",
             exportPath: "数据导出路径：",
             proxy: "HTTP/HTTPS 代理：",
+            proxyEnable: "启用 HTTP/HTTPS 代理",
+            proxyPlaceholder: "代理地址",
             theme: "图标主题：",
             themeDefault: "默认",
             themeContrast: "高对比",
@@ -125,6 +138,8 @@ KCM.SimpleKCM {
             logRetention: "Log & record retention (days):",
             exportPath: "Export path:",
             proxy: "HTTP/HTTPS proxy:",
+            proxyEnable: "Enable HTTP/HTTPS proxy",
+            proxyPlaceholder: "Proxy address",
             theme: "Icon theme:",
             themeDefault: "Default",
             themeContrast: "High Contrast",
@@ -172,18 +187,20 @@ KCM.SimpleKCM {
         }
         busy = true
         statusText = tr("saving")
+        cfg_language = normalizedLanguage(languageCombo.currentValue)
         saveCommands = []
         if (apiKeyArg === "demo") {
             saveCommands.push("/usr/local/bin/dsmon set-key " + shellQuote("demo"))
         }
         queueSetCommand("interval", [String(intervalSpin.value)])
         queueSetCommand("threshold", [threshold])
-        queueSetCommand("ui-language", [languageCombo.currentValue])
+        queueSetCommand("ui-language", [cfg_language])
         queueSetCommand("auto-start", [autoStartCheck.checked ? "true" : "false"])
         queueSetCommand("alert-mode", [alertModeCombo.currentValue])
         queueSetCommand("api-alert-enabled", [apiAlertCheck.checked ? "true" : "false"])
         queueSetCommand("retention-days", [String(logRetentionSpin.value)])
         queueSetCommand("export-path", [exportPathField.text.trim()])
+        queueSetCommand("proxy-enabled", [proxyEnableCheck.checked ? "true" : "false"])
         queueSetCommand("http-proxy", [proxyField.text.trim()])
         queueSetCommand("theme", [themeCombo.currentValue])
         queueSetCommand("icon-stroke", [iconStrokeCheck.checked ? "true" : "false"])
@@ -213,6 +230,7 @@ KCM.SimpleKCM {
         apiAlertCheck.checked = config.api_alert_enabled === undefined ? true : !!config.api_alert_enabled
         logRetentionSpin.value = config.retention_days || 30
         exportPathField.text = config.export_path || ""
+        proxyEnableCheck.checked = !!config.proxy_enabled
         proxyField.text = config.http_proxy || ""
         var themeIndex = themeCombo.indexOfValue(config.theme || "default")
         themeCombo.currentIndex = themeIndex >= 0 ? themeIndex : 0
@@ -222,14 +240,18 @@ KCM.SimpleKCM {
         lowColorField.text = colors.low || "b9463c"
         degradedColorField.text = colors.degraded || "78695a"
         noDataColorField.text = colors.nodata || "69696e"
-        var selectedLanguage = config.ui_language === "zh" || config.ui_language === "en" ? config.ui_language : systemLanguage()
+        var selectedLanguage = normalizedLanguage(config.ui_language)
+        loadingConfig = true
+        cfg_language = selectedLanguage
         var index = languageCombo.indexOfValue(selectedLanguage)
         languageCombo.currentIndex = index >= 0 ? index : 0
+        loadingConfig = false
         statusText = tr("loaded")
     }
 
     Component.onCompleted: {
-        var index = languageCombo.indexOfValue(systemLanguage())
+        loadingConfig = true
+        var index = languageCombo.indexOfValue(normalizedLanguage(cfg_language))
         if (index >= 0) {
             languageCombo.currentIndex = index
         }
@@ -248,6 +270,7 @@ KCM.SimpleKCM {
                 try {
                     applyConfig(stdout)
                 } catch (error) {
+                    loadingConfig = false
                     statusText = tr("loadFailed") + error
                 }
             } else if (savingBatch) {
@@ -309,6 +332,11 @@ KCM.SimpleKCM {
                 { text: "English", value: "en" },
                 { text: "中文", value: "zh" }
             ]
+            onCurrentValueChanged: {
+                if (!loadingConfig && (currentValue === "zh" || currentValue === "en")) {
+                    cfg_language = currentValue
+                }
+            }
         }
 
         QtControls.CheckBox {
@@ -360,7 +388,13 @@ KCM.SimpleKCM {
             id: proxyField
             Kirigami.FormData.label: tr("proxy")
             Layout.fillWidth: true
-            placeholderText: "http://127.0.0.1:7890"
+            enabled: proxyEnableCheck.checked
+            placeholderText: tr("proxyPlaceholder")
+        }
+
+        QtControls.CheckBox {
+            id: proxyEnableCheck
+            text: tr("proxyEnable")
         }
 
         QtControls.ComboBox {

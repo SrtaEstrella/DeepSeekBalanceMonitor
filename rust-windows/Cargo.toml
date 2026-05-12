@@ -1,6 +1,6 @@
 [package]
 name = "deepseek-balance-monitor"
-version = "1.2.0"
+version = "1.2.5"
 edition = "2021"
 rust-version = "1.77.2"
 description = "Windows tray balance monitor for the DeepSeek API"
