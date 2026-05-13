@@ -238,9 +238,15 @@ def on_show_balance(icon, item):
                     granted=f"{b['granted_balance']:,.2f}")
         lines.append(f"💰 {bal}")
 
-        cr = get_consumption_rate()
-        if cr:
-            daily_rate, hours_left, _curr = cr
+        if app.demo_mode and hasattr(app, '_demo_rate'):
+            daily_rate = app._demo_rate
+            hours_left = app._demo_hours
+        else:
+            cr = get_consumption_rate()
+            daily_rate = hours_left = None
+            if cr:
+                daily_rate, hours_left = cr[:2]
+        if daily_rate is not None:
             days = int(hours_left // 24)
             hrs = int(hours_left % 24)
             if days > 0:
@@ -331,7 +337,7 @@ def _on_dev_tools(icon, item):
         app._tk_root.withdraw()
     win = tk.Toplevel(app._tk_root)
     win.title("Dev Tools")
-    win.geometry("300x380")
+    win.geometry("300x480")
     win.resizable(False, False)
 
     f = ttk.Frame(win, padding=10)
@@ -357,6 +363,16 @@ def _on_dev_tools(icon, item):
     ttk.Combobox(f, textvariable=status_var, values=status_opts,
                  state="readonly", width=14).pack(anchor="w", pady=(0, 8))
 
+    ttk.Label(f, text="Consumption rate / Est. hours (display only)").pack(anchor="w")
+    rf = ttk.Frame(f)
+    rf.pack(fill="x", pady=(0, 8))
+    rate_var = tk.DoubleVar(value=1.5)
+    hours_var = tk.DoubleVar(value=28 * 24)
+    ttk.Spinbox(rf, from_=0, to=9999, increment=0.1, textvariable=rate_var, width=6).pack(side="left")
+    ttk.Label(rf, text=" /day").pack(side="left")
+    ttk.Spinbox(rf, from_=0, to=99999, textvariable=hours_var, width=6).pack(side="left", padx=4)
+    ttk.Label(rf, text=" h").pack(side="left")
+
     def _apply():
         with app._lock:
             app.balances = {"CNY": {
@@ -371,6 +387,8 @@ def _on_dev_tools(icon, item):
             err = err_var.get().strip()
             app.error = err if err else None
             app.last_check = datetime.now()
+            app._demo_rate = rate_var.get()
+            app._demo_hours = hours_var.get()
         if app.icon:
             app.icon.title = app.balance_tooltip()
             app.icon.icon = create_icon_image(app)
@@ -416,7 +434,7 @@ def main():
         install_proxy(proxy)
         log(f"Proxy set: {proxy}")
 
-    if "--demo" in sys.argv or app.config.get("api_key", "").strip().lower() == "demo":
+    if "--demo" in sys.argv:
         app.demo_mode = True
         log("Demo mode enabled")
         app._demo_history = _generate_demo_history()

@@ -376,7 +376,7 @@ def open_settings(app):
             return lbl
 
         ttk.Separator(scroll_frame, orient="horizontal").pack(fill="x", pady=(12, 8))
-        ttk.Label(scroll_frame, text="v1.2.1_260512",
+        ttk.Label(scroll_frame, text="v1.2.5_260513",
                   foreground="gray").pack(anchor="w")
 
         by_frame = tk.Frame(scroll_frame)

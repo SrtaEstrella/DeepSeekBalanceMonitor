@@ -2,11 +2,11 @@
 
 All notable changes to DeepSeek Balance Monitor are documented here.
 
-## Python v1.2.5-dev (upcoming)
+## Python v1.2.5 (2026-05-13)
 
 ### Added
 
-- Demo mode update: `--demo` flag or API key `demo` both trigger; ~200 mock history records generated on startup; developer panel preserved
+- Developer Demo mode update: mock history data generated on startup; developer panel gains custom consumption rate & estimated hours display
 - Custom icon colour live preview with hex validation on save
 - History date filter with `YYYYMMDD` format query
 
