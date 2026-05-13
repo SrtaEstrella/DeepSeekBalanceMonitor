@@ -51,7 +51,7 @@ jobs:
           pyinstaller --onefile --windowed --noconsole `
             --name DeepSeekBalanceMonitor `
             --icon assets/app.ico `
-            --paths src `
+            --paths . `
             --add-data "assets/app.ico`;." `
             --version-file scripts/version_info.txt `
             --clean `
