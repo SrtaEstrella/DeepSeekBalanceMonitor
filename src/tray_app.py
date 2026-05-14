@@ -92,6 +92,8 @@ def do_balance_check(app: AppState):
         app.schedule_next_check(lambda: do_balance_check(app), interval_sec)
         return
 
+    if not app.running:
+        return
     try:
         status = fetch_service_status()
     except Exception:
@@ -99,6 +101,8 @@ def do_balance_check(app: AppState):
     with app._lock:
         app.service_status = status
 
+    if not app.running:
+        return
     api_key = app.config.get("api_key", "").strip()
     if not api_key:
         with app._lock:
@@ -317,10 +321,13 @@ def on_quit(icon, item):
     if app is None:
         icon.stop()
         return
-    app.running = False
-    app.cancel_timer()
-    log("Shutting down")
     icon.stop()
+    app.running = False
+    try:
+        app.cancel_timer()
+    except Exception:
+        pass
+    log("Shutting down")
 
 
 def _on_dev_tools(icon, item):
@@ -433,6 +440,8 @@ def main():
     if proxy and app.config.get("proxy_enabled", False):
         install_proxy(proxy)
         log(f"Proxy set: {proxy}")
+    else:
+        install_proxy("")
 
     if "--demo" in sys.argv:
         app.demo_mode = True
@@ -486,5 +495,8 @@ def main():
         pass
     finally:
         app.running = False
-        app.cancel_timer()
+        try:
+            app.cancel_timer()
+        except Exception:
+            pass
         log("Exited cleanly")

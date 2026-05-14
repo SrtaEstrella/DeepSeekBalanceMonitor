@@ -2,6 +2,15 @@
 
 All notable changes to DeepSeek Balance Monitor are documented here.
 
+## Python v1.2.6 (2026-05-13)
+
+### Fixed
+
+- Fixed connection refused and exit failure when system proxy (Clash etc.) goes down: empty `ProxyHandler` blocks system proxy, `socket.setdefaulttimeout` global fallback
+- Fixed DNS resolution timeout blocking on network loss: global socket timeout + exit flag checks
+- Fixed potential `cancel_timer` deadlock preventing `icon.stop()`: `icon.stop()` now runs before cleanup
+- Removed API key `demo` trigger for dev mode: Python uses `--demo` CLI flag only
+
 ## Python v1.2.5 (2026-05-13)
 
 ### Added

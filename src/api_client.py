@@ -2,21 +2,24 @@
 DeepSeek API client - fetches account balance from the DeepSeek API.
 """
 import json
+import socket
 import urllib.request
 import urllib.error
+
+socket.setdefaulttimeout(15)
 
 _proxy_installed = False
 
 
 def install_proxy(proxy_url: str):
-    """Install a global HTTP/HTTPS proxy. Call once before any requests.
-    Pass empty string to clear."""
+    """Install a global HTTP/HTTPS proxy. If proxy_url is non-empty, use it.
+    Otherwise install an opener that bypasses system proxy (direct connection)."""
     global _proxy_installed
     if proxy_url:
         handler = urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
         urllib.request.install_opener(urllib.request.build_opener(handler))
-    elif _proxy_installed:
-        urllib.request.install_opener(urllib.request.build_opener())
+    else:
+        urllib.request.install_opener(urllib.request.build_opener(urllib.request.ProxyHandler({})))
     _proxy_installed = True
 
 
@@ -85,7 +88,7 @@ def fetch_service_status():
         url = "https://status.flashcat.cloud/deepseek"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             html = resp.read().decode("utf-8")
         full = " ".join(html.split("\n"))
 

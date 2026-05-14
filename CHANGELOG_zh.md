@@ -2,6 +2,15 @@
 
 所有值得记录的变更均记录于此。
 
+## Python v1.2.6 (2026-05-13)
+
+### 修复
+
+- 修复系统代理（Clash 等）关闭后连接拒绝且无法退出软件的问题：空 `ProxyHandler` 拦截系统代理，`socket.setdefaulttimeout` 全局兜底
+- 修复无网络时 DNS 解析超时阻塞：全局 socket 超时 + 退出标志位检查
+- 修复退出流程中 `cancel_timer` 潜在阻塞导致 `icon.stop()` 无法执行的问题：`icon.stop()` 提前至清理逻辑之前
+- 移除 API Key 输入 `demo` 触发开发模式：Python 版仅用 `--demo` 命令
+
 ## Python v1.2.5 (2026-05-13)
 
 ### 新增
