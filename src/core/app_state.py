@@ -1,4 +1,4 @@
-"""
+﻿"""
 Application state - holds balances, config, timer, and helper methods.
 """
 import os
@@ -63,7 +63,7 @@ class AppState:
                                 rm = r
                         except Exception:
                             pass
-                    return f"{T('total_balance', self.lang)} {rm:.2f}%"
+                    return f"{T('total_balance', self.lang)} {rm:.1f}%"
             if self.error:
                 return T("tooltip_error", self.lang, error=self.error)
             b = self.get_preferred_balance()

@@ -842,7 +842,7 @@ class HistoryFrame(ttk.Frame):
             labels = [t[5:10] for t in rts]  # MM-DD
             vals = rvs
             self._draw_line(labels, vals, canvas=canvas, chart_h=chart_h,
-                            y_fmt="{:.2f}%")
+                            y_fmt="{:.1f}%")
         else:
             rows = self._query_range("balance_history", ["timestamp", "total"], days, api_id)
             labels = [r[0][5:10] for r in rows]  # MM-DD
@@ -924,7 +924,7 @@ class HistoryFrame(ttk.Frame):
         if not any(vals):
             self._wipe_chart(canvas)
             return
-        self._draw_bar(labels, vals, y_fmt="{:.2f}%", canvas=canvas, chart_h=chart_h)
+        self._draw_bar(labels, vals, y_fmt="{:.1f}%", canvas=canvas, chart_h=chart_h)
 
     def _draw_package_hourly(self, api_id, days=7, canvas=None, chart_h=None):
         """Draw hourly distribution of quota consumption, refined by the finest
@@ -934,7 +934,7 @@ class HistoryFrame(ttk.Frame):
         if not any(vals):
             self._wipe_chart(canvas)
             return
-        self._draw_bar(labels, vals, y_fmt="{:.2f}%", canvas=canvas, chart_h=chart_h)
+        self._draw_bar(labels, vals, y_fmt="{:.1f}%", canvas=canvas, chart_h=chart_h)
 
     def on_show(self):
         self._refresh_api_selector(follow_preferred=True)

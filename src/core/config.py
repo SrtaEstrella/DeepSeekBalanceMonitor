@@ -1,4 +1,4 @@
-"""
+﻿"""
 Constants, i18n, logging, config load/save, DPI awareness.
 Imported by all other modules.
 """
@@ -205,11 +205,11 @@ _T = {
         "api_select":        "🔀 API选择",
         "add_edit_api":      "➕ 添加/编辑…",
         "win_5h":            "5h滚动",
-        "win_weekly":        "每周",
-        "win_monthly":       "每月",
+        "win_weekly":        "周余量",
+        "win_monthly":       "月余量",
         "pkg_rate_line":     "忙时 {rate:.2f}%{unit}/h | 剩余 {remaining}h",
-        "remaining_pct":     "{pct:.0f}% 剩余",
-        "remaining_pct_fine":  "{pct:.2f}% 剩余",
+        "remaining_pct":     "{pct:.0f}%",
+        "remaining_pct_fine":  "{pct:.1f}%",
         "col_5h":            "5h 余额%",
         "col_weekly":        "周余额%",
         "col_monthly":       "月余额%",
@@ -372,11 +372,11 @@ _T = {
         "api_select":        "🔀 API Select",
         "add_edit_api":      "➕ Add/Edit…",
         "win_5h":            "5h rolling",
-        "win_weekly":        "Weekly",
-        "win_monthly":       "Monthly",
+        "win_weekly":        "Weekly rem",
+        "win_monthly":       "Monthly rem",
         "pkg_rate_line":     "Busy {rate:.2f}%{unit}/h | {remaining}h left",
-        "remaining_pct":     "{pct:.0f}% left",
-        "remaining_pct_fine":  "{pct:.2f}% left",
+        "remaining_pct":     "{pct:.0f}%",
+        "remaining_pct_fine":  "{pct:.1f}%",
         "col_5h":            "5h Remaining%",
         "col_weekly":        "Weekly Remaining%",
         "col_monthly":       "Monthly Remaining%",
