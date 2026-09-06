@@ -17,6 +17,7 @@ class MainWindow:
         self._win = None
         self._notebook = None
         self._tabs = {}
+        self._win_icon_handles = []
 
     def _ensure(self):
         if self._win is not None and self._win.winfo_exists():
@@ -49,16 +50,10 @@ class MainWindow:
         w, h = win.winfo_width(), win.winfo_height()
         win.geometry(f"+{(sw - w)//2}+{(sh - h)//2}")
 
-        try:
-            if getattr(sys, "frozen", False):
-                icon_path = os.path.join(sys._MEIPASS, "app.ico")
-            else:
-                # src/ui/main_window.py → repo root = parents[2]
-                icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "assets", "app.ico")
-            if os.path.isfile(icon_path):
-                win.iconbitmap(icon_path)
-        except Exception:
-            pass
+        # NOTE: no static iconbitmap here. iconbitmap out-prioritizes
+        # iconphoto, so it would pin the window to app.ico and hide the
+        # dynamic icon; the window instead inherits the Tk default icon set
+        # via iconphoto (same crisp rendering as the unsaved-changes dialog).
 
         # hide on close, with unsaved check
         self._last_tab = "settings"
@@ -118,9 +113,113 @@ class MainWindow:
         win.withdraw()
         return win
 
-        # start hidden
-        win.withdraw()
-        return win
+    def set_dynamic_icon(self, pil_img):
+        """iconphoto is REQUIRED as the Tk baseline (without it the window
+        shows Tk's default feather icon), then WM_SETICON overrides both
+        slots: BIG ← 256px handle (taskbar), SMALL ← smooth 16px frame.
+
+        Content is deduplicated: if the rendered art hasn't changed we skip
+        ALL icon rebuilding, so the taskbar holds one stable handle instead
+        of churning (the churn was what made clarity come and go)."""
+        win = self._win
+        if win is None or not win.winfo_exists():
+            return
+        try:
+            import hashlib
+            fp = hashlib.md5(pil_img.tobytes()).hexdigest()
+            if fp == getattr(self, "_icon_fp", None):
+                return
+            self._icon_fp = fp
+        except Exception:
+            pass
+        try:
+            from PIL import Image, ImageTk
+            # CRITICAL: taskbar big icon — if Tk's iconphoto ever re-applies
+            # the window icon, it must be the SAME 256px art as our
+            # WM_SETICON BIG handle, otherwise whichever path wins shows a
+            # small image upscaled (blur). Same source, same size → crisp
+            # either way.
+            big = pil_img.resize((256, 256), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(big)
+            win.iconphoto(True, photo)
+            self._dynamic_icon = photo
+        except Exception as e:
+            from src.core.config import log
+            log(f"Window icon (iconphoto) update failed: {e}")
+        self._apply_win32_icons(pil_img)
+        # Tk re-applies its 256px photo to the small icon during the event
+        # pump, so re-inject the smooth 16px SMALL AFTER the loop is idle —
+        # the last writer wins for the title bar.
+        try:
+            self._win.after(0, lambda: self._apply_win32_icons(pil_img, force=True))
+        except Exception:
+            pass
+
+    def _apply_win32_icons(self, pil_img, force=False):
+        """Class-level + window-level icon install with TWO stability rules:
+        1) content dedup — if the rendered art is unchanged, do NOT rebuild the
+           handles (rebuilding every poll was racing Tk's paint and produced
+           the on-again/off-again blur);
+        2) delayed destruction — old handles live one extra cycle before
+           DestroyIcon so the taskbar never references a freed icon.
+        force=True skips the dedup (used for the post-event-loop SMALL
+        re-injection)."""
+        try:
+            import hashlib, io, struct, ctypes
+            from PIL import Image
+            from src.core.paths import CONFIG_DIR
+            fp = hashlib.md5(pil_img.tobytes()).hexdigest()
+            if not force and fp == getattr(self, "_icon_fp", None):
+                return
+            self._icon_fp = fp
+            try:
+                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            ico = CONFIG_DIR / "taskbar_icon.ico"
+            master = pil_img.resize((256, 256), Image.LANCZOS)
+            small16 = pil_img.resize((16, 16), Image.LANCZOS)
+            with open(ico, "wb") as f:
+                # two frames: 16px (pre-smoothed) + 256px master
+                f.write(struct.pack("<HHH", 0, 1, 2))
+                entries = []
+                for im in (small16, master):
+                    b = io.BytesIO()
+                    im.save(b, format="PNG")
+                    data = b.getvalue()
+                    w = im.width if im.width < 256 else 0
+                    h = im.height if im.height < 256 else 0
+                    entries.append((w, h, data))
+                off = 22 + 16 * len(entries)
+                for w, h, data in entries:
+                    f.write(struct.pack("<BBBBHHII", w, h, 0, 0, 1, 32,
+                                        len(data), off))
+                    off += len(data)
+                for _, _, data in entries:
+                    f.write(data)
+            user32 = ctypes.windll.user32
+            hwnd = self._win.winfo_id()
+            h_big = user32.LoadImageW(None, str(ico), 1, 256, 256, 0x10)
+            h_sm = user32.LoadImageW(None, str(ico), 1, 16, 16, 0x10)
+            if h_big:
+                user32.SendMessageW(hwnd, 0x80, 1, h_big)   # ICON_BIG
+            if h_sm:
+                user32.SendMessageW(hwnd, 0x80, 0, h_sm)    # ICON_SMALL
+            if h_big:
+                user32.SetClassLongPtrW(hwnd, -14, h_big)   # GCLP_HICON
+            if h_sm:
+                user32.SetClassLongPtrW(hwnd, -34, h_sm)    # GCLP_HICONSM
+            # retire handles from two generations ago
+            for old in getattr(self, "_win_icon_pending", []):
+                try:
+                    user32.DestroyIcon(old)
+                except Exception:
+                    pass
+            self._win_icon_pending = getattr(self, "_win_icon_handles", [])
+            self._win_icon_handles = [h for h in (h_big, h_sm) if h]
+        except Exception as e:
+            from src.core.config import log
+            log(f"Window icon (taskbar) update failed: {e}")
 
     def _ensure_tab(self, key):
         """Build a registered tab's content on first use. Returns content or None."""
@@ -181,6 +280,13 @@ class MainWindow:
         try:
             win.deiconify()
             win.lift()
+            # window just became visible: push the current status icon so the
+            # title bar / taskbar don't sit on the static .ico until the next poll
+            try:
+                from src.tray_app import _update_icons
+                _update_icons(self.app)
+            except Exception:
+                pass
             win.after(50, win.focus_force)
         except Exception:
             pass

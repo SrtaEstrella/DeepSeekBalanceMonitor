@@ -105,6 +105,10 @@ def _fetch_payg(api):
             data = fetch_stepfun_balance(key, platform_key=plat,
                                          http_proxy=app_proxy_url())
             return api_id, data, None
+        if plat.startswith("openrouter"):
+            from src.platforms.openrouter import fetch_openrouter_balance
+            data = fetch_openrouter_balance(key, http_proxy=app_proxy_url())
+            return api_id, data, None
         data = fetch_balance(key)
         return api_id, data, None
     except Exception as e:
@@ -114,6 +118,23 @@ def _fetch_payg(api):
 def app_proxy_url():
     cfg = load_config()
     return cfg.get("http_proxy", "") if cfg.get("proxy_enabled") else ""
+
+
+def _update_icons(app):
+    """Render the status icon once and push it to BOTH the tray and (if the
+    main window exists) the window's title-bar/taskbar icon.
+
+    Tk calls must run on the main thread: the window update is dispatched via
+    after(0) so it stays safe when invoked from the polling thread."""
+    img = create_icon_image(app)
+    if app.icon:
+        app.icon.icon = img
+    mw = getattr(app, "_main_window", None)
+    if mw is not None and not isinstance(mw, tk.Toplevel) and hasattr(mw, "set_dynamic_icon"):
+        try:
+            app._tk_root.after(0, lambda: mw.set_dynamic_icon(img))
+        except Exception:
+            pass
 
 
 def _fetch_package(api, proxy_url=""):
@@ -129,6 +150,9 @@ def _fetch_package(api, proxy_url=""):
         elif plat.startswith("command_code"):
             from src.platforms.command_code import fetch_command_code_quota
             quota = fetch_command_code_quota(api_key=key, platform_key=plat, http_proxy=proxy_url)
+        elif plat.startswith("glm_"):
+            from src.platforms.glm import fetch_glm_quota
+            quota = fetch_glm_quota(api_key=key, platform_key=plat, http_proxy=proxy_url)
         else:
             from src.platforms.opencode import fetch_opencode_quota
             quota = fetch_opencode_quota(api_key=key, http_proxy=proxy_url)
@@ -146,7 +170,7 @@ def do_balance_check(app: AppState):
             app.last_check = datetime.now()
         if app.icon:
             app.icon.title = app.balance_tooltip()
-            app.icon.icon = create_icon_image(app)
+            _update_icons(app)
         interval_sec = int(app.config.get("interval_minutes", 10)) * 60
         app.schedule_next_check(lambda: do_balance_check(app), interval_sec)
         return
@@ -171,7 +195,7 @@ def do_balance_check(app: AppState):
 
     if not app.running:
         return
-    # --- Multi-API fetch: payg + package, all in parallel ---
+    # --- Fetch APIs: parallel (all) or one-hot (preferred only) ---
     cfg = load_config()
     apis = get_apis(cfg)
     if not apis:
@@ -180,6 +204,16 @@ def do_balance_check(app: AppState):
             app.balances = {}
             app.package_data = None
     else:
+        if cfg.get("fetch_mode", "parallel") == "onehot":
+            pref = get_preferred_api(cfg)
+            apis = [pref] if pref else []
+        if not apis:
+            # one-hot with no preferred API: skip queries this round, keep last
+            # data untouched, and keep the poll loop alive (must reschedule here,
+            # since the tail of this function is skipped)
+            interval_sec = int(app.config.get("interval_minutes", 10)) * 60
+            app.schedule_next_check(lambda: do_balance_check(app), interval_sec)
+            return
         from concurrent.futures import ThreadPoolExecutor, as_completed
         proxy_url = cfg.get("http_proxy", "") if cfg.get("proxy_enabled") else ""
         payg_apis = [a for a in apis if a.get("mode") == "payg"]
@@ -306,7 +340,7 @@ def do_balance_check(app: AppState):
 
     if app.icon:
         app.icon.title = app.balance_tooltip()
-        app.icon.icon = create_icon_image(app)
+        _update_icons(app)
         # keep tray menu lang in sync
         try:
             app.icon.menu = app._rebuild_menu()
@@ -685,7 +719,7 @@ class DevFrame(ttk.Frame):
                 self.app._demo_hrs = self.hours_var.get()
             if self.app.icon:
                 self.app.icon.title = self.app.balance_tooltip()
-                self.app.icon.icon = create_icon_image(self.app)
+                _update_icons(self.app)
             # refresh overview if present
             try:
                 if hasattr(self.app, "_main_window") and self.app._main_window:
@@ -739,8 +773,11 @@ def _apply_preferred_switch(app: AppState, aid: str, *_args):
             app.error = None
     if app.icon:
         app.icon.title = app.balance_tooltip()
-        app.icon.icon = create_icon_image(app)
-        app.icon.menu = app._rebuild_menu()
+        _update_icons(app)
+        # NOTE: do NOT rebuild the Win32 menu here — the menu structure is
+        # static and rebuilding it from the polling thread races the Windows
+        # menu redraw (hover text garbles on Win11 25H2). Menu refreshes only
+        # happen on startup / preferred-API switch / language change.
     mw = getattr(app, "_main_window", None)
     if mw and hasattr(mw, "refresh_all"):
         app._tk_root.after(0, lambda: mw.refresh_all(follow_preferred=True))
@@ -845,6 +882,10 @@ def main():
             log(f"API management open failed: {e}")
 
     icon_img = create_icon_image(app)
+    # push the very first status icon to the window too, in case the main
+    # window opens before the first poll completes (app.icon not ready yet —
+    # _update_icons handles that gracefully)
+    _update_icons(app)
     app.icon = pystray.Icon(
         APP_ID,
         icon_img,

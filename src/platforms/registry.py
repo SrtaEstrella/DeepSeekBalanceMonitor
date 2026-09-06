@@ -153,6 +153,40 @@ PLATFORMS = {
         default_billing_period="monthly",
         has_status_page=False,
     ),
+    # GLM Coding Plan — 5h + weekly token windows, monthly MCP call count
+    "glm_coding_cn": PlatformMeta(
+        key="glm_coding_cn",
+        display_name="GLM Coding Plan (CN)",
+        default_mode="package",
+        supports_payg=False,
+        supports_package=True,
+        console_url="https://open.bigmodel.cn",
+        package_windows=["5h", "weekly", "monthly"],
+        default_billing_period="weekly",
+        has_status_page=False,
+    ),
+    "glm_coding_global": PlatformMeta(
+        key="glm_coding_global",
+        display_name="GLM Coding Plan (Global)",
+        default_mode="package",
+        supports_payg=False,
+        supports_package=True,
+        console_url="https://z.ai",
+        package_windows=["5h", "weekly", "monthly"],
+        default_billing_period="weekly",
+        has_status_page=False,
+    ),
+    # OpenRouter — USD payg; account credits via /credits, key cap via /key
+    "openrouter": PlatformMeta(
+        key="openrouter",
+        display_name="OpenRouter",
+        default_mode="payg",
+        supports_payg=True,
+        supports_package=False,
+        package_windows=[],
+        has_status_page=False,
+        console_url="https://openrouter.ai",
+    ),
 }
 
 def get_platform(key: str) -> PlatformMeta | None:

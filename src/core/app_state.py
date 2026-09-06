@@ -50,7 +50,7 @@ class AppState:
                 mp = pd.get("monthly") or pd.get("weekly") or pd.get("5h") or pd.get("rolling")
                 if mp:
                     rm = mp.get("percent_remaining", 100 - mp.get("usage_percent", 0))
-                    return f"📊 {T('total_balance', self.lang)} {rm:.0f}%"
+                    return f"{T('total_balance', self.lang)} {rm:.0f}%"
             if self.error:
                 return T("tooltip_error", self.lang, error=self.error)
             b = self.get_preferred_balance()
