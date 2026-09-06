@@ -1,4 +1,4 @@
-"""
+﻿"""
 Application state - holds balances, config, timer, and helper methods.
 """
 import os
@@ -46,11 +46,24 @@ class AppState:
         with self._lock:
             pd = self.package_data
             if pd:
-                # package mode: show best available remaining %
+                # package mode: show best available remaining % (refined
+                # fractional value for weekly/monthly when possible)
                 mp = pd.get("monthly") or pd.get("weekly") or pd.get("5h") or pd.get("rolling")
                 if mp:
                     rm = mp.get("percent_remaining", 100 - mp.get("usage_percent", 0))
-                    return f"📊 {T('total_balance', self.lang)} {rm:.0f}%"
+                    pref_id = self.config.get("preferred_api_id", "")
+                    api = next((a for a in (self.config.get("apis") or [])
+                                if a.get("id") == pref_id), None)
+                    bp = (api or {}).get("billing_period") or "monthly"
+                    if bp in ("weekly", "monthly"):
+                        try:
+                            from src.core.storage import get_refined_remaining
+                            r = get_refined_remaining(pref_id, target=bp)
+                            if r is not None:
+                                rm = r
+                        except Exception:
+                            pass
+                    return f"{T('total_balance', self.lang)} {rm:.1f}%"
             if self.error:
                 return T("tooltip_error", self.lang, error=self.error)
             b = self.get_preferred_balance()
@@ -108,14 +121,8 @@ class AppState:
             apis = self.config.get("apis") or []
             api = next((a for a in apis if a.get("id") == pref_id), None)
             mode = (api or {}).get("mode", "payg")
-            bp = (api or {}).get("billing_period") or None
-            if not bp:
-                try:
-                    from src.platforms.registry import get_platform
-                    pmeta = get_platform((api or {}).get("platform", ""))
-                    bp = pmeta.default_billing_period if pmeta else None
-                except Exception:
-                    bp = None
+            # billing_period is user-set at API creation — take it verbatim
+            bp = (api or {}).get("billing_period")
             try:
                 if mode == "package":
                     line = float(self.config.get("daily_spend_line_percent", 10))

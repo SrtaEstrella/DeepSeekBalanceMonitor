@@ -1,10 +1,10 @@
-"""
+﻿"""
 Tray icon image generation - rounded-rectangle with bold balance label.
 """
 from PIL import Image, ImageDraw, ImageFont
 
 from src.core.config import log, get_api_by_id
-from src.platforms.registry import get_platform
+
 
 _RADIUS = 12
 
@@ -77,18 +77,18 @@ def _draw_rounded_rect(draw, xy, radius, **kwargs):
 
 def create_icon_image(app):
     try:
-        return _create_icon_image_impl(app)
+        return _create_icon_image_impl(app, 256)
     except Exception as e:
         log(f"Icon generation failed: {e}")
-        img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+        img = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
-        draw.rectangle([8, 8, 56, 56], fill=(105, 105, 110, 255))
+        draw.rectangle([32, 32, 224, 224], fill=(105, 105, 110, 255))
         return img
 
 
-def _create_icon_image_impl(app):
-    size = 64
-    radius = _RADIUS
+def _create_icon_image_impl(app, size=256):
+    scale = size / 64.0
+    radius = int(_RADIUS * scale)
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
@@ -109,10 +109,8 @@ def _create_icon_image_impl(app):
             if pref_api_id:
                 pref_api = get_api_by_id(pref_api_id)
                 if pref_api:
+                    # user-set billing_period, verbatim — no platform fallback
                     billing_period = pref_api.get("billing_period") or ""
-                    if not billing_period:
-                        pmeta = get_platform(pref_api.get("platform", ""))
-                        billing_period = pmeta.default_billing_period if pmeta else "monthly"
         except Exception:
             pass
         col_map = {"5h": pd.get("5h") or pd.get("rolling"), "weekly": pd.get("weekly"), "monthly": pd.get("monthly")}
@@ -153,9 +151,10 @@ def _create_icon_image_impl(app):
     if app.config.get("icon_stroke", False):
         stroke = text_fill[:3] + (180,)
         _draw_rounded_rect(draw, [margin, margin, size - margin, size - margin],
-                           radius=radius, outline=stroke, width=5)
+                           radius=radius, outline=stroke, width=max(1, int(5 * scale)))
 
-    font_size = 48 if len(label) <= 1 else (44 if len(label) == 2 else 38)
+    font_size = (48 if len(label) <= 1 else (44 if len(label) == 2 else 38))
+    font_size = int(font_size * scale)
     try:
         font = ImageFont.truetype("segoeuib.ttf", font_size)
     except Exception:

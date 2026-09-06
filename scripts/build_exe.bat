@@ -37,21 +37,10 @@ echo [*] Stopping running instance (if any)...
 taskkill /f /im DeepSeekBalanceMonitor.exe >nul 2>&1
 echo.
 
-:: Build the single-file executable
-echo [*] Building executable (this may take a minute)...
-echo.
-
-pyinstaller ^
-    --onefile ^
-    --windowed ^
-    --noconsole ^
-    --name "DeepSeekBalanceMonitor" ^
-    --icon assets/app.ico ^
-    --paths src ^
-    --add-data "assets/app.ico;." ^
-    --version-file scripts/version_info.txt ^
-    --clean ^
-    main.py
+:: Build via the .spec (single source of truth: icon, datas, version,
+:: DPI manifest, onefile). Do NOT use ad-hoc CLI flags — they bypass the
+:: manifest embedded by the spec.
+pyinstaller DeepSeekBalanceMonitor.spec --noconfirm --clean
 
 if %errorlevel% neq 0 (
     echo.

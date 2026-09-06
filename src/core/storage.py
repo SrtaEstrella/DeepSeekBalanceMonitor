@@ -68,6 +68,312 @@ def save_balance_record(currency: str, total: float, topped: float, granted: flo
         log(f"Failed to save balance record: {e}")
 
 
+def get_refined_remaining_series(api_id: str, target: str = "monthly",
+                                 days: int = 30) -> tuple:
+    """Refined REMAINING% (100 - usage) at every observation in a window —
+    the interpolation extends to historical data, not just the latest point.
+
+    Model works on the usage series (positive deltas = consumption) and
+    returns REMAINING for display consistency: real_remaining =
+    100 - (usage_int + 0.5 - frac). Internally it warms up over a longer
+    window (90 days) so the front of the requested range already carries
+    established rate/prefix (no artificial .5 plateaus); only points within
+    the requested `days` are returned.
+
+    Returns (timestamps, remaining_vals).
+    """
+    from datetime import datetime, timedelta
+    try:
+        from src.core.config import load_config
+        api = next((a for a in (load_config().get("apis") or [])
+                    if a.get("id") == api_id), None)
+        from src.platforms.registry import get_platform
+        pmeta = get_platform((api or {}).get("platform", "")) if api else None
+        pools = (pmeta.window_pools if pmeta else None) or {}
+        fpool = pools.get("5h")
+        if not fpool or not pools.get(target):
+            return [], []
+        col_map = {"5h": "h5_percent", "weekly": "weekly_percent", "monthly": "monthly_percent"}
+        tcol = col_map.get(target, "monthly_percent")
+        model_days = max(90, days)   # warm-up window for rate/prefix
+        conn = _connect_package()
+        cutoff = (datetime.now() - timedelta(days=model_days)).strftime("%Y-%m-%d %H:%M:%S")
+        out_cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        cur = conn.execute(
+            f"SELECT timestamp, h5_percent, {tcol} FROM package_history "
+            f"WHERE api_id=? AND timestamp>=? ORDER BY timestamp ASC",
+            (api_id or "", cutoff))
+        rows = cur.fetchall()
+        conn.close()
+        if len(rows) < 4:
+            return [], []
+
+        tidx = 2
+
+        def _dt(a, b):
+            try:
+                from datetime import datetime as dt
+                return (dt.strptime(b, "%Y-%m-%d %H:%M:%S") -
+                        dt.strptime(a, "%Y-%m-%d %H:%M:%S")).total_seconds() / 3600.0
+            except Exception:
+                return 0.0
+
+        ts_out, v_out = [], []
+        # CAUSAL refinement: every point uses only data up to its own
+        # timestamp (prefix accumulated per target period; rate from the most
+        # recent segments BEFORE the point). New online rows never change
+        # historical values.
+        from collections import deque
+        spend_cum = 0.0      # 5h spend $ since period start (prefix, causal)
+        rise_cum = 0.0       # coarse rise % since period start (prefix)
+        prev_ts = None
+        rate_q = deque(maxlen=4)
+        u_cont = None        # continuous usage estimate (never quantized)
+        drift_check = 0
+        for i, r in enumerate(rows):
+            ts, h5, obs = r[0], r[1], r[2]
+            if obs is None:
+                prev_ts = ts
+                continue
+            if i > 0:
+                p_obs = rows[i-1][tidx]
+                if p_obs is not None and obs < p_obs:
+                    # period reset: re-anchor and reset prefix
+                    spend_cum = 0.0
+                    rise_cum = 0.0
+                    rate_q.clear()
+                    u_cont = obs + 0.5
+                    prev_ts = ts
+                    drift_check = 0
+                    continue
+                a5, b5 = rows[i-1][1], h5
+                d_usd = 0.0
+                if a5 is not None and b5 is not None and b5 > a5:
+                    d_usd = (b5 - a5) / 100.0 * fpool
+                    spend_cum += d_usd
+                if p_obs is not None and obs > p_obs:
+                    rise_cum += obs - p_obs
+                avg_per_coarse = (spend_cum / rise_cum) if (rise_cum > 0 and spend_cum > 0) else None
+                if u_cont is None:
+                    u_cont = obs + 0.5
+                # only REAL 5h spend in this interval advances the estimate
+                # (consumption is intermittent — never smear a rate over
+                # every row, which overshoots the observed total)
+                if avg_per_coarse and d_usd > 0:
+                    u_cont += d_usd / avg_per_coarse
+                # band clamp: only the LOWER band is enforced (never let the
+                # estimate run below obs-0.5). No upper clamp — the line keeps
+                # falling with real consumption; a plateau can only mean
+                # genuinely zero spend.
+                if u_cont < obs - 0.5:
+                    u_cont = obs - 0.5
+            else:
+                u_cont = obs + 0.5
+            prev_ts = ts
+            if ts < out_cutoff:
+                continue      # only the requested range is surfaced
+            ts_out.append(ts)
+            # REMAINING = 100 - continuous usage (smooth line)
+            v_out.append(round(max(0.0, min(100.0, 100 - u_cont)), 2))
+        return ts_out, v_out
+    except Exception as e:
+        log(f"Refined remaining series failed: {e}")
+        return [], []
+
+
+def get_refined_remaining(api_id: str, target: str = "monthly") -> float | None:
+    """Latest refined remaining% — thin wrapper over the causal series
+    (last point). See get_refined_remaining_series for the model."""
+    try:
+        ts, vs = get_refined_remaining_series(api_id, target=target, days=90)
+        return vs[-1] if vs else None
+    except Exception as e:
+        log(f"Refined remaining failed: {e}")
+        return None
+
+
+def get_refined_daily_consumption(api_id: str, days: int = 30,
+                                  target: str = "monthly") -> tuple:
+    """Model coarse-window daily consumption with finer-window shape.
+
+    OCGo windows quantize usage to whole percent steps; a 5h rolling window
+    samples ~10min and therefore carries far finer consumption structure than
+    weekly (1% steps) or monthly (same). This refines the TARGET window's
+    daily totals by distributing its observed rise with the SHAPE of a finer
+    window's positive deltas (relative weights).
+
+    Correctness rules:
+      1) reset edges (target-window usage DROPS) split the series into
+         periods; each period is anchored independently, so a quota reset
+         never lets pre-reset consumption contaminate the post-reset shape,
+         and vice versa.
+      2) per-period anchoring: the modeled sum inside a period equals that
+         period's observed target rise → rounding the modeled daily values
+         back to integers reproduces the coarse observation (self-consistent).
+      Fallback: L1 5h shape (>=2 segments) -> L2 weekly shape -> L3 raw steps.
+
+    Returns (dates[days], vals[days], source) source='5h'|'weekly'|'raw'.
+    """
+    from collections import defaultdict
+    from datetime import datetime, timedelta
+    try:
+        col_map = {"5h": "h5_percent", "weekly": "weekly_percent", "monthly": "monthly_percent"}
+        tcol = col_map.get(target, "monthly_percent")
+        conn = _connect_package()
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        cur = conn.execute(
+            "SELECT timestamp, h5_percent, weekly_percent, monthly_percent "
+            "FROM package_history WHERE api_id=? AND timestamp>=? ORDER BY timestamp ASC",
+            (api_id or "", cutoff))
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        log(f"Refined consumption query failed: {e}")
+        rows = []
+
+    tidx = {"h5": 1, "weekly": 2, "monthly": 3}[target]
+
+    def _periods(rows, tidx):
+        """Split rows into target-window periods cut at usage DROP edges
+        (quota resets). Returns list of row-slices."""
+        per = []
+        start = 0
+        for i in range(1, len(rows)):
+            a, b = rows[i-1][tidx], rows[i][tidx]
+            if a is not None and b is not None and b < a:
+                per.append(rows[start:i])
+                start = i
+        per.append(rows[start:])
+        return per
+
+    def _weight_and_count(col_idx, rows):
+        w = defaultdict(float)
+        n = 0
+        for i in range(1, len(rows)):
+            a, b = rows[i-1][col_idx], rows[i][col_idx]
+            if a is None or b is None:
+                continue
+            d = b - a
+            if d <= 0:
+                continue
+            n += 1
+            w[rows[i][0][:10]] += d
+        return w, n
+
+    def _rise(col_idx, rows):
+        t = 0.0
+        for i in range(1, len(rows)):
+            a, b = rows[i-1][col_idx], rows[i][col_idx]
+            if a is not None and b is not None and b > a:
+                t += b - a
+        return t
+
+    # pick the shape source once for the whole series
+    w5, n5 = _weight_and_count(1, rows)
+    ww, nw = _weight_and_count(2, rows)
+    if n5 >= 2:
+        source, s_idx = "5h", 1
+    elif nw >= 2:
+        source, s_idx = "weekly", 2
+    else:
+        source, s_idx = "raw", None
+
+    daily = defaultdict(float)
+    if source == "raw":
+        for i in range(1, len(rows)):
+            a, b = rows[i-1][3], rows[i][3]
+            if a is not None and b is not None and b > a:
+                daily[rows[i][0][:10]] += b - a
+    else:
+        # per-period anchoring: each reset-bounded period anchors independently
+        for period in _periods(rows, tidx):
+            w, n = _weight_and_count(s_idx, period)
+            rise = _rise(tidx, period)
+            tot = sum(w.values())
+            if rise > 0 and tot > 0:
+                for k, v in w.items():
+                    daily[k] += v / tot * rise
+
+    dates = []
+    vals = []
+    d0 = datetime.now() - timedelta(days=days - 1)
+    for i in range(days):
+        day = (d0 + timedelta(days=i)).strftime("%Y-%m-%d")
+        dates.append(day[5:10])
+        vals.append(round(daily.get(day, 0.0), 2))
+    return dates, vals, source
+
+
+def get_refined_hourly_distribution(api_id: str, days: int = 7) -> tuple:
+    """Hourly consumption distribution refined by the finest window's shape.
+
+    Bins positive deltas (consumption segments) of the 5h window by hour of
+    day; falls back to weekly deltas when 5h is sparse. No anchoring needed —
+    this is a shape distribution, expressed in the source window's percent
+    units. Returns (labels[24], vals[24], source)."""
+    from collections import defaultdict
+    from datetime import datetime, timedelta
+    try:
+        conn = _connect_package()
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        cur = conn.execute(
+            "SELECT timestamp, h5_percent, weekly_percent "
+            "FROM package_history WHERE api_id=? AND timestamp>=? ORDER BY timestamp ASC",
+            (api_id or "", cutoff))
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        log(f"Refined hourly query failed: {e}")
+        rows = []
+
+    def _hour_weights(rows, col_idx, pool_usd):
+        """Hour-of-day consumption (percent of the source pool), time-prorated
+        across hour boundaries: a segment (t0->t1, d%) is split by the minutes
+        it occupies in each hour, so the distribution is continuous
+        (fractional), never integer buckets."""
+        h = defaultdict(float)
+        n = 0
+        for i in range(1, len(rows)):
+            a, b = rows[i-1][col_idx], rows[i][col_idx]
+            if a is None or b is None:
+                continue
+            d = b - a
+            if d <= 0:
+                continue
+            n += 1
+            d_usd = d / 100.0 * pool_usd
+            try:
+                t0 = datetime.strptime(rows[i-1][0], "%Y-%m-%d %H:%M:%S")
+                t1 = datetime.strptime(rows[i][0], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                h[int(rows[i][0][11:13])] += d_usd
+                continue
+            span = (t1 - t0).total_seconds()
+            if span <= 0:
+                h[int(t1.hour)] += d_usd
+                continue
+            cur = t0
+            while cur < t1:
+                nxt = min(t1, (cur.replace(minute=0, second=0, microsecond=0)
+                               + timedelta(hours=1)))
+                frac = (nxt - cur).total_seconds() / span
+                h[cur.hour] += d_usd * frac
+                cur = nxt
+        return h, n
+
+    h5, n5 = _hour_weights(rows, 1, 12.0)
+    hw, nw = _hour_weights(rows, 2, 30.0)
+    if n5 >= 2:
+        h, source = h5, "5h"
+    elif nw >= 2:
+        h, source = hw, "weekly"
+    else:
+        h, source = {}, "raw"
+    labels = [f"{x:02d}:00" for x in range(24)]
+    vals = [round(h.get(x, 0.0), 2) for x in range(24)]
+    return labels, vals, source
+
+
 def get_today_spend(api_id: str, mode: str = "payg", billing_period: str | None = None) -> float:
     """Single-day consumption for today, in CNY (payg) or percent-points (package).
     Busy-period deltas only (same aggregation as the daily-usage charts)."""

@@ -332,10 +332,9 @@ class HistoryFrame(ttk.Frame):
             if api.get("id") == api_id:
                 api_name = api.get("name", "")
                 api_mode = api.get("mode", "payg")
+                # billing_period is a per-API setting set at creation — take
+                # the user's value verbatim, no platform fallback here
                 billing_period = api.get("billing_period") or ""
-                if not billing_period:
-                    pmeta = get_platform(api.get("platform", ""))
-                    billing_period = pmeta.default_billing_period if pmeta else "monthly"
                 break
 
         # read per-API cached data
@@ -395,11 +394,19 @@ class HistoryFrame(ttk.Frame):
                             break
                     if wdata:
                         remaining = wdata.get("percent_remaining", 100 - wdata.get("usage_percent", 0))
+                        fine = False
+                        if wkey in ("weekly", "monthly"):
+                            from src.core.storage import get_refined_remaining
+                            r = get_refined_remaining(api_id, target=wkey)
+                            if r is not None:
+                                remaining, fine = r, True
                         reset_s = wdata.get("reset_in_sec", 0)
                         from src.platforms.opencode import format_reset_short
                         reset_str = format_reset_short(reset_s, lang) if reset_s > 0 else "-"
+                        line_suffix = T("remaining_pct_fine" if fine else "remaining_pct",
+                                        lang, pct=remaining)
                         lines.append({"bar": True, "label": f"{label} ", "pct": remaining,
-                                      "suffix": f" {T('remaining_pct', lang, pct=remaining)}（{reset_str}）"})
+                                      "suffix": f" {line_suffix}（{reset_str}）"})
                 # daily consumption line (from package percent changes) — above rate line
                 dc = self._calc_package_daily_consumption(api_id)
                 if dc:
@@ -566,22 +573,23 @@ class HistoryFrame(ttk.Frame):
             return None
 
     def _calc_package_daily_consumption(self, api_id):
-        """Calculate today's quota consumption and 30d daily average (percent rises).
-        Returns (today, avg_30d) or None."""
+        """Today's quota consumption and 30d daily average, from the refined
+        model (fine shape, anchored to the window's observed rise) so the info
+        bar matches the charts. Returns (today, avg_30d) or None."""
         try:
-            from collections import defaultdict
-            col = self._get_billing_col(api_id)
-            rows = self._query_range("package_history", ["timestamp", col], 30, api_id)
-            if len(rows) < 2:
+            from src.core.storage import get_refined_daily_consumption
+            api = get_api_by_id(api_id) if api_id else None
+            bp = (api or {}).get("billing_period") or "monthly"
+            _labels, vals, _src = get_refined_daily_consumption(api_id, days=30, target=bp)
+            if not any(vals):
                 return None
-            daily = defaultdict(float)
-            for i in range(1, len(rows)):
-                rise = (rows[i][1] or 0) - (rows[i-1][1] or 0)
-                if rise > 0:
-                    daily[rows[i][0][:10]] += rise
-            today_str = datetime.now().strftime("%Y-%m-%d")
-            today = daily.get(today_str, 0)
-            avg = sum(daily.values()) / max(len(daily), 1) if daily else 0
+            today_str = datetime.now().strftime("%m-%d")
+            today = 0.0
+            for lbl, v in zip(_labels, vals):
+                if lbl == today_str:
+                    today = v
+            nonz = [v for v in vals if v > 0]
+            avg = sum(vals) / max(len(vals), 1)
             return round(today, 2), round(avg, 2)
         except Exception:
             return None
@@ -608,15 +616,27 @@ class HistoryFrame(ttk.Frame):
             return
         lang = self.app.lang
         rows = self._query_range(table, ["timestamp", value_col], days, api_id)
-        if len(rows) < 2:
-            return
-        # per-day consumption: consecutive deltas; positive movement only
+        # per-day consumption: for package (invert), use the refined model
+        # (fine 5h/→weekly shape anchored to the window's observed rise);
+        # for payg, consecutive positive drops.
         daily = defaultdict(float)
-        for i in range(1, len(rows)):
-            prev_v, cur_v = rows[i-1][1] or 0, rows[i][1] or 0
-            delta = (cur_v - prev_v) if invert else (prev_v - cur_v)
-            if delta > 0:
-                daily[rows[i][0][:10]] += delta
+        if invert:
+            from src.core.storage import get_refined_daily_consumption
+            api = get_api_by_id(api_id) if api_id else None
+            bp = (api or {}).get("billing_period") or "monthly"
+            _d0 = datetime.now() - timedelta(days=days - 1)
+            _dat, _vals, _src = get_refined_daily_consumption(api_id, days=days, target=bp)
+            for i, v in enumerate(_vals):
+                if v > 0:
+                    daily[(_d0 + timedelta(days=i)).strftime("%Y-%m-%d")] += v
+        else:
+            if len(rows) < 2:
+                return
+            for i in range(1, len(rows)):
+                prev_v, cur_v = rows[i-1][1] or 0, rows[i][1] or 0
+                delta = (cur_v - prev_v) if invert else (prev_v - cur_v)
+                if delta > 0:
+                    daily[rows[i][0][:10]] += delta
 
         today = datetime.now().date()
         start = today - timedelta(days=days - 1)
@@ -727,12 +747,13 @@ class HistoryFrame(ttk.Frame):
         if hi == lo: hi = lo + 1
         chart.create_line(ml, mt, ml, mt + h, fill="#999", width=1)
         chart.create_line(ml, mt + h, ml + w, mt + h, fill="#999", width=1)
-        # 5 y-axis ticks
+        # 5 y-axis ticks (whole number + %; hover keeps the precise y_fmt)
         for k in range(5):
             pct = k / 4
             v = lo + (hi - lo) * pct
             y = mt + h * (1 - pct)
-            chart.create_text(ml - 6, y, text=y_fmt.format(v), anchor="e", fill="#666", font=("Segoe UI", 7))
+            tick = f"{v:.0f}" + ("%" if "%" in y_fmt else "")
+            chart.create_text(ml - 6, y, text=tick, anchor="e", fill="#666", font=("Segoe UI", 7))
         n = len(labels)
         # x-axis labels: denser, evenly spaced
         n_x = min(n, 8)
@@ -779,7 +800,9 @@ class HistoryFrame(ttk.Frame):
         for pct in (0.5, 1):
             v = hi * pct
             y = mt + h * (1 - pct)
-            chart.create_text(ml - 6, y, text=y_fmt.format(v), anchor="e", fill="#666", font=("Segoe UI", 7))
+            # axis ticks: whole-number + % (hover keeps the precise y_fmt)
+            tick = f"{v:.0f}" + ("%" if "%" in y_fmt else "")
+            chart.create_text(ml - 6, y, text=tick, anchor="e", fill="#666", font=("Segoe UI", 7))
         bw = max(w / len(vals) - 2, 4)
         hover = []
         for i, v in enumerate(vals):
@@ -808,27 +831,40 @@ class HistoryFrame(ttk.Frame):
                 api = get_api_by_id(api_id) if api_id else None
                 if api:
                     billing_period = api.get("billing_period") or ""
-                    if not billing_period:
-                        pmeta = get_platform(api.get("platform", ""))
-                        billing_period = pmeta.default_billing_period if pmeta else "monthly"
             except Exception:
                 pass
-            from src.platforms.registry import billing_col
-            col = billing_col(billing_period)
-            rows = self._query_range("package_history", ["timestamp", col], days, api_id)
-            labels = [r[0][5:10] for r in rows]  # MM-DD
-            vals = [100 - (r[1] or 0) for r in rows]
+            from src.core.storage import get_refined_remaining_series
+            rts, rvs = get_refined_remaining_series(api_id, target=billing_period or "monthly",
+                                                    days=days)
+            if not rvs:
+                self._wipe_chart(canvas)
+                return
+            labels = [t[5:10] for t in rts]  # MM-DD
+            vals = rvs
+            self._draw_line(labels, vals, canvas=canvas, chart_h=chart_h,
+                            y_fmt="{:.1f}%")
         else:
             rows = self._query_range("balance_history", ["timestamp", "total"], days, api_id)
             labels = [r[0][5:10] for r in rows]  # MM-DD
             vals = [r[1] for r in rows]
-        self._draw_line(labels, vals, canvas=canvas, chart_h=chart_h)
+            self._draw_line(labels, vals, canvas=canvas, chart_h=chart_h)
+
+    def _wipe_chart(self, canvas):
+        """Clear a chart canvas; used on no-data paths so a stale chart
+        (e.g. the heatmap) doesn't linger after a view switch."""
+        chart = canvas if canvas is not None else getattr(self, "chart", None)
+        if chart is not None:
+            try:
+                chart.delete("all")
+            except Exception:
+                pass
 
     def _draw_daily_consumption(self, api_id, days=30, canvas=None, chart_h=None):
         """Draw daily consumption bar chart. Each day = sum of busy-period drops."""
         from collections import defaultdict
         rows = self._query_range("balance_history", ["timestamp", "topped"], days, api_id)
         if len(rows) < 2:
+            self._wipe_chart(canvas)
             return
         daily = defaultdict(float)
         for i in range(1, len(rows)):
@@ -850,6 +886,7 @@ class HistoryFrame(ttk.Frame):
         from collections import defaultdict
         rows = self._query_range("balance_history", ["timestamp", "topped"], days, api_id)
         if len(rows) < 2:
+            self._wipe_chart(canvas)
             return
         hourly = defaultdict(float)
         for i in range(1, len(rows)):
@@ -862,55 +899,41 @@ class HistoryFrame(ttk.Frame):
         self._draw_bar(labels, vals, y_fmt="{:.1f}", canvas=canvas, chart_h=chart_h)
 
     def _get_billing_col(self, api_id):
-        """Get the billing_period column for this API (own setting, else platform default)."""
-        billing_period = "monthly"
+        """Get the package_history column for this API's configured billing
+        period (user-set at creation; no platform fallback)."""
+        billing_period = ""
         try:
             api = get_api_by_id(api_id) if api_id else None
             if api:
                 billing_period = api.get("billing_period") or ""
-                if not billing_period:
-                    pmeta = get_platform(api.get("platform", ""))
-                    billing_period = pmeta.default_billing_period if pmeta else "monthly"
         except Exception:
             pass
         from src.platforms.registry import billing_col
         return billing_col(billing_period)
 
     def _draw_package_daily(self, api_id, days=30, canvas=None, chart_h=None):
-        """Draw daily quota consumption bar chart from package_history percent changes."""
-        from collections import defaultdict
-        col = self._get_billing_col(api_id)
-        rows = self._query_range("package_history", ["timestamp", col], days, api_id)
-        if len(rows) < 2:
+        """Draw daily quota consumption bar chart, refined: the target window's
+        coarse 1%-steps are distributed with a finer window's consumption
+        shape (5h → weekly → raw fallback), total anchored to the target's
+        observed rise."""
+        from src.core.storage import get_refined_daily_consumption
+        api = get_api_by_id(api_id) if api_id else None
+        bp = (api or {}).get("billing_period") or "monthly"
+        labels, vals, _src = get_refined_daily_consumption(
+            api_id, days=days, target=bp)
+        if not any(vals):
+            self._wipe_chart(canvas)
             return
-        daily = defaultdict(float)
-        for i in range(1, len(rows)):
-            rise = (rows[i][1] or 0) - (rows[i-1][1] or 0)
-            if rise > 0:
-                daily[rows[i][0][:10]] += rise
-        vals = []
-        d = datetime.now() - timedelta(days=days-1)
-        for i in range(days):
-            day = (d + timedelta(days=i)).strftime("%Y-%m-%d")
-            labels.append(day[5:10])  # MM-DD
-            vals.append(round(daily.get(day, 0), 2))
         self._draw_bar(labels, vals, y_fmt="{:.1f}%", canvas=canvas, chart_h=chart_h)
 
     def _draw_package_hourly(self, api_id, days=7, canvas=None, chart_h=None):
-        """Draw hourly distribution of quota consumption from package_history."""
-        from collections import defaultdict
-        col = self._get_billing_col(api_id)
-        rows = self._query_range("package_history", ["timestamp", col], days, api_id)
-        if len(rows) < 2:
+        """Draw hourly distribution of quota consumption, refined by the finest
+        window's shape (5h deltas, weekly fallback)."""
+        from src.core.storage import get_refined_hourly_distribution
+        labels, vals, _src = get_refined_hourly_distribution(api_id, days=days)
+        if not any(vals):
+            self._wipe_chart(canvas)
             return
-        hourly = defaultdict(float)
-        for i in range(1, len(rows)):
-            rise = (rows[i][1] or 0) - (rows[i-1][1] or 0)
-            if rise > 0:
-                hour = int(rows[i][0][11:13])
-                hourly[hour] += rise
-        labels = [f"{h:02d}:00" for h in range(24)]
-        vals = [hourly.get(h, 0) for h in range(24)]
         self._draw_bar(labels, vals, y_fmt="{:.1f}%", canvas=canvas, chart_h=chart_h)
 
     def on_show(self):

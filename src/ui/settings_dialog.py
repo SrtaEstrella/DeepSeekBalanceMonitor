@@ -56,6 +56,16 @@ class SettingsFrame(ttk.Frame):
         interval_sb.pack(side="left", padx=(6, 0))
         ttk.Label(int_row, text=T("interval_hint", lang)).pack(side="left")
 
+        # fetch mode — one line: 查询模式：[并发(全部) | 单打(仅首选)]
+        mode_row = ttk.Frame(scroll_frame); mode_row.pack(fill="x", pady=(0, 8))
+        ttk.Label(mode_row, text=T("fetch_mode_label", lang)).pack(side="left")
+        FETCH_OPTS = [T("fetch_mode_parallel", lang), T("fetch_mode_onehot", lang)]
+        FETCH_MAP = {T("fetch_mode_parallel", lang): "parallel", T("fetch_mode_onehot", lang): "onehot"}
+        cur_mode = FETCH_MAP.get(self.app.config.get("fetch_mode", "parallel"), "parallel")
+        fetch_mode_var = tk.StringVar(value=next((d for d, k in FETCH_MAP.items() if k == cur_mode), FETCH_OPTS[0]))
+        fetch_mode_combo = ttk.Combobox(mode_row, textvariable=fetch_mode_var, values=FETCH_OPTS, state="readonly", width=22)
+        fetch_mode_combo.pack(side="left", padx=(6, 0))
+
         # threshold — leading word line, then indented widget line (fits any language)
         ttk.Label(scroll_frame, text=T("threshold_label", lang)).pack(anchor="w", pady=(0, 2))
         thr_row = ttk.Frame(scroll_frame); thr_row.pack(fill="x", padx=(16, 0), pady=(0, 8))
@@ -186,6 +196,28 @@ class SettingsFrame(ttk.Frame):
         retention_var=tk.IntVar(value=self.app.config.get("retention_days",180))
         retention_sb=ttk.Spinbox(ret_row, from_=1, to=3650, textvariable=retention_var, width=8)
         retention_sb.pack(side="left", padx=(6, 0))
+        # open the runtime log file directly: notepad.exe launched detached (no shell
+        # association lookup, no "choose app" dialog; Popen returns instantly so
+        # the UI thread is never blocked)
+        def _open_log():
+            import os, subprocess
+            from src.core.config import log as _log
+            from src.core.paths import LOG_FILE, CONFIG_DIR
+            path = str(LOG_FILE)
+            try:
+                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                if not LOG_FILE.exists():
+                    LOG_FILE.write_text("", encoding="utf-8")
+                subprocess.Popen(["notepad.exe", path])
+            except Exception as e:
+                _log(f"Open log failed: {e}")
+                try:
+                    os.startfile(path)
+                except Exception as e2:
+                    _log(f"Open log fallback failed: {e2}")
+        tk.Label(ret_row, text=T("open_log_label", lang), foreground="#1a5fb4",
+                 cursor="hand2").pack(side="left", padx=(12, 0), pady=(0, 2))
+        ret_row.winfo_children()[-1].bind("<Button-1>", lambda e: _open_log())
 
         # export path — one line
         exp_row=ttk.Frame(scroll_frame); exp_row.pack(fill="x", pady=(0, 8))
@@ -251,7 +283,7 @@ class SettingsFrame(ttk.Frame):
         # --- Dirty tracking ---
         def _mark_dirty(*_a):
             self._dirty = True
-        for v in [interval_var, threshold_var, alert_enabled_var, threshold_pkg_var,
+        for v in [interval_var, fetch_mode_var, threshold_var, alert_enabled_var, threshold_pkg_var,
                   daily_spend_yuan_var, daily_spend_pct_var, spend_alert_var,
                   api_alert_var, peak_valley_var, rain_var, theme_var,
                   lang_var, auto_var, retention_var, proxy_enabled_var, proxy_var]:
@@ -302,6 +334,7 @@ class SettingsFrame(ttk.Frame):
                 except Exception as e:
                     log(f"Settings save: credential sync failed: {e}")
             self.app.config["interval_minutes"]=interval
+            self.app.config["fetch_mode"]=FETCH_MAP.get(fetch_mode_var.get(), "parallel")
             self.app.config["threshold_yuan"]=threshold
             self.app.config["threshold_package_percent"]=threshold_pkg_var.get()
             self.app.config["daily_spend_line_yuan"]=daily_spend_yuan_var.get()

@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-v2.0.2 包结构；12 平台（DeepSeek/Kimi/StepFun 按量 + OCGo/MiniMax/Command Code 套餐）；管理页设为首选按钮；Python 与 Rust 双实现。
+v2.0.2 包结构；15 平台（DeepSeek/Kimi/StepFun/OpenRouter 按量 + OCGo/MiniMax/Command Code/GLM 套餐）；管理页设为首选按钮；并行/单打双查询模式；Python 与 Rust 双实现。
 
 ### 架构总览（v2.0.2 包结构）
 
@@ -58,12 +58,18 @@ src/
 
 ### 1. 多平台注册表 `src/platforms/registry.py`
 
-- `PlatformMeta`: `key/display_name/default_mode/package_windows/has_status_page/console_url` + `default_billing_period`（billing_period 未设时全链路默认窗口）
-- 已注册 12 平台：
-  - payg：`deepseek`、`kimi_token_cn/global`（Kimi）、`stepfun_token_cn/global`（StepFun）
-  - package：`opencode_go`、`minimax_token_cn/global`、`minimax_coding_cn/global`、`command_code`、`command_code_goat`
+- `PlatformMeta`: `key/display_name/default_mode/package_windows/has_status_page/console_url` + `default_billing_period`（billing_period 未设时全链路默认窗口）+ `window_pools`（窗口池美元限额，供余额插值模型；仅 OCGo 设置 5h=$12/周=$30/月=$60，其余平台 None 不精化）
+- 已注册 15 平台：
+  - payg：`deepseek`、`kimi_token_cn/global`（Kimi）、`stepfun_token_cn/global`（StepFun）、`openrouter`（OpenRouter，需 Management Key）
+  - package：`opencode_go`、`minimax_token_cn/global`、`minimax_coding_cn/global`、`command_code`、`command_code_goat`、`glm_coding_cn/global`（GLM Coding Plan）
 - 添加新平台只需在 PLATFORMS 字典加一行
 - 同文件还承载共享常量：`BILLING_COL_MAP/billing_col()`、`STATUS_ICON`
+
+### 1.1 GLM Coding Plan 与 OpenRouter
+
+- `glm_coding_cn/global`（`src/platforms/glm.py`）：半公开监控端点 `GET /api/monitor/usage/quota/limit`（open.bigmodel.cn / api.z.ai），Bearer 认证（401 时回退裸 Key 一次）；`TOKENS_LIMIT` 第 0/1 条 → 5h/weekly，`TIME_LIMIT` → monthly（MCP 次数）；默认周窗口首选
+- `openrouter`（`src/platforms/openrouter.py`）：**仅 Management Key** 可用——`GET /api/v1/credits` 得账户 USD 余额（total_credits − total_usage）；普通推理 Key（401/403）直接报"Invalid or non-management API key"，无 /key 降级
+- 两者均无状态页、无套餐忙时预留
 
 ### 2. Command Code 平台（`src/platforms/command_code.py`）
 
@@ -76,6 +82,14 @@ src/
 - 窗口数据 `{name: usage_percent, percent_remaining, reset_in_sec}`；resetAt 秒/毫秒归一；used/cap 兼容数字或数字字符串
 - billing_period 平台默认贯通各消费点：icon_renderer、history_dialog（信息栏/折线/日志列/容耗图 `_get_billing_col`）、tray 通知栏均按 `get_platform(...).default_billing_period` 解析；API 表单未选项时落平台默认
 - 若 5h/week/monthly 全缺 → ValueError（无窗口可显示）
+
+### 2.1 余额插值模型（OCGo 周/月剩余精化，`storage.get_refined_remaining(_series)`）
+
+- 目标：把 API 整数周/月剩余%（1% 步长）插值为连续小数（如 70 → 70.43）；日消耗分布为次生
+- **取整语义实证为 round**（区间交集实验排除 floor 5%；绝对重建排除 ceil 0.4%）
+- **池比换算**：5h=$12 / 周=$30 / 月=$60（`window_pools`）；细粒度 5h 实际消耗美元 / 每 1% 粗额平均美元 = 档内消耗进度
+- 模型：`剩余 = 100 − (起步 usage+0.5 + Σ 每行区间真实 5h 消耗$ ÷ 每粗% 平均$)`；**仅按真实消耗推进**（不摊速率），下钳防穿越，**严格因果**（每点只用前驱，新增在线行不影响历史值）；无 5h 消耗行保持平段（真无消耗）
+- 5h 自身取整（自身窗口整数）不作处理；无 `window_pools` 平台（minimax/glm/command_code）回落原始整数
 
 ### 3. 管理 Tab `src/manage_frame.py`（合并 API管理+流水）
 
@@ -122,8 +136,9 @@ src/
 
 ### 7. 托盘与通知
 
+- **双查询模式**（`config.fetch_mode`: `"parallel"` / `"onehot"`，设置页可选，默认 parallel）：parallel = 每轮查全 API；onehot = 仅查首选 API（服务状态也只抓首选平台）；onehot 无首选时本轮跳过查询、保留旧数据但**必须重排 schedule_next_check**（早返回前补调度，否则轮询停止）。缓存语义两模统一：被查询 API 走同一 merge（失败保留旧数据+只更新 error），未被查询的缓存完全不动
 - 并行查询所有 API + 按平台并行抓服务状态（statuses dict 按 api.platform 分发入缓存，合并而非覆盖）
-- DB 状态写入只写本平台 own_st：无状态页平台（command_code/opencode/kimi/stepfun）或抓取失败一律写 NULL，禁止借用首选平台状态
+- DB 状态写入只写本平台 own_st：无状态页平台（command_code/opencode/kimi/stepfun/glm/openrouter）或抓取失败一律写 NULL，禁止借用首选平台状态
 - MiniMax TLS UNEXPECTED_EOF → fetch_minimax_quota 内 3 次重试（间隔1s）+ Connection: close
 - 切换首选 → refresh_all(follow_preferred=True)
 - 托盘菜单顺序：⚡余额速览（default）→ 📊看板 → API选择 → 立即查询 → 控制台 → 设置；API 选择子菜单仅显示名称
