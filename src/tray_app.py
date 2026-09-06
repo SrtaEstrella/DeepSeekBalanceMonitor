@@ -411,12 +411,6 @@ def get_today_spend_value(app: AppState) -> float:
     pref_id = app.config.get("preferred_api_id", "")
     api = next((a for a in app.config.get("apis") or [] if a.get("id") == pref_id), {})
     bp = api.get("billing_period") or None
-    if not bp and api.get("mode") == "package":
-        try:
-            pmeta = get_platform(api.get("platform", ""))
-            bp = pmeta.default_billing_period if pmeta else None
-        except Exception:
-            bp = None
     return get_today_spend(pref_id, api.get("mode", "payg"), bp)
 
 
@@ -493,10 +487,8 @@ def on_show_balance(icon, item):
                 pref_api = get_api_by_id(app.config.get("preferred_api_id")) if app.config.get("preferred_api_id") else None
                 if pref_api:
                     pref_platform = pref_api.get("platform", "")
+                    # user-set billing_period, verbatim — no platform fallback
                     billing_period = pref_api.get("billing_period") or ""
-                    if not billing_period:
-                        pmeta = get_platform(pref_platform)
-                        billing_period = pmeta.default_billing_period if pmeta else "monthly"
             except Exception:
                 pass
             pmeta = get_platform(pref_platform) if pref_platform else None
@@ -523,9 +515,17 @@ def on_show_balance(icon, item):
                         break
                 if wdata:
                     remaining = wdata.get("percent_remaining", 100 - wdata.get("usage_percent", 0))
+                    fine = False
+                    if wkey in ("weekly", "monthly"):
+                        from src.core.storage import get_refined_remaining
+                        pref_id = app.config.get("preferred_api_id", "")
+                        r = get_refined_remaining(pref_id or "", target=wkey)
+                        if r is not None:
+                            remaining, fine = r, True
                     reset_s = wdata.get("reset_in_sec", 0)
                     reset_str = format_reset_short(reset_s, lang) if reset_s > 0 else "-"
-                    lines.append(f"{label}：{T('remaining_pct', lang, pct=remaining)}（{reset_str}）")
+                    key = "remaining_pct_fine" if fine else "remaining_pct"
+                    lines.append(f"{label}：{T(key, lang, pct=remaining)}（{reset_str}）")
             # status line only if platform has a status page
             if pmeta and pmeta.has_status_page:
                 ind = raw_status.get("indicator") if raw_status else None

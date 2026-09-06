@@ -58,7 +58,7 @@ src/
 
 ### 1. 多平台注册表 `src/platforms/registry.py`
 
-- `PlatformMeta`: `key/display_name/default_mode/package_windows/has_status_page/console_url` + `default_billing_period`（billing_period 未设时全链路默认窗口）
+- `PlatformMeta`: `key/display_name/default_mode/package_windows/has_status_page/console_url` + `default_billing_period`（billing_period 未设时全链路默认窗口）+ `window_pools`（窗口池美元限额，供余额插值模型；仅 OCGo 设置 5h=$12/周=$30/月=$60，其余平台 None 不精化）
 - 已注册 15 平台：
   - payg：`deepseek`、`kimi_token_cn/global`（Kimi）、`stepfun_token_cn/global`（StepFun）、`openrouter`（OpenRouter，需 Management Key）
   - package：`opencode_go`、`minimax_token_cn/global`、`minimax_coding_cn/global`、`command_code`、`command_code_goat`、`glm_coding_cn/global`（GLM Coding Plan）
@@ -82,6 +82,14 @@ src/
 - 窗口数据 `{name: usage_percent, percent_remaining, reset_in_sec}`；resetAt 秒/毫秒归一；used/cap 兼容数字或数字字符串
 - billing_period 平台默认贯通各消费点：icon_renderer、history_dialog（信息栏/折线/日志列/容耗图 `_get_billing_col`）、tray 通知栏均按 `get_platform(...).default_billing_period` 解析；API 表单未选项时落平台默认
 - 若 5h/week/monthly 全缺 → ValueError（无窗口可显示）
+
+### 2.1 余额插值模型（OCGo 周/月剩余精化，`storage.get_refined_remaining(_series)`）
+
+- 目标：把 API 整数周/月剩余%（1% 步长）插值为连续小数（如 70 → 70.43）；日消耗分布为次生
+- **取整语义实证为 round**（区间交集实验排除 floor 5%；绝对重建排除 ceil 0.4%）
+- **池比换算**：5h=$12 / 周=$30 / 月=$60（`window_pools`）；细粒度 5h 实际消耗美元 / 每 1% 粗额平均美元 = 档内消耗进度
+- 模型：`剩余 = 100 − (起步 usage+0.5 + Σ 每行区间真实 5h 消耗$ ÷ 每粗% 平均$)`；**仅按真实消耗推进**（不摊速率），下钳防穿越，**严格因果**（每点只用前驱，新增在线行不影响历史值）；无 5h 消耗行保持平段（真无消耗）
+- 5h 自身取整（自身窗口整数）不作处理；无 `window_pools` 平台（minimax/glm/command_code）回落原始整数
 
 ### 3. 管理 Tab `src/manage_frame.py`（合并 API管理+流水）
 

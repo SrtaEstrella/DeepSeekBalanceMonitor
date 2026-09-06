@@ -22,8 +22,16 @@ class PlatformMeta:
     # Package-specific: which windows to display
     # "5h"=rolling, "weekly", "monthly"
     package_windows: list = field(default_factory=lambda: ["5h", "weekly", "monthly"])
-    # Preferred billing window used when api.billing_period is unset
-    default_billing_period: str = "monthly"
+    # Fallback billing window when api.billing_period is UNSET. Whatever the
+    # user explicitly configured is always taken verbatim (platform has no
+    # say over it); this only answers "what if unset" — None derives from
+    # package_windows[-1] via default_billing_period_for().
+    default_billing_period: str | None = None
+    # Absolute window pool sizes (credits/$) for the interpolation model:
+    # lets a finest-window consumption rate place the fractional part of a
+    # coarse window's integer remaining% (see storage.refine_remaining).
+    # None → no refinement (fall back to the raw integer value).
+    window_pools: dict | None = None
     # Does this platform have a status page? (affects history table status column)
     has_status_page: bool = False
 
@@ -46,6 +54,7 @@ PLATFORMS = {
         supports_package=True,
         console_url="https://opencode.ai/auth",
         package_windows=["5h", "weekly", "monthly"],
+        window_pools={"5h": 12.0, "weekly": 30.0, "monthly": 60.0},
         has_status_page=False,
     ),
     "minimax_token_cn": PlatformMeta(
@@ -194,6 +203,18 @@ def get_platform(key: str) -> PlatformMeta | None:
 
 def get_all_platforms() -> list[PlatformMeta]:
     return list(PLATFORMS.values())
+
+def default_billing_period_for(pmeta: PlatformMeta | None) -> str:
+    """Fallback billing window for a platform when api.billing_period is UNSET:
+    explicit override if configured, else the last window in package_windows,
+    else 'monthly'. User-configured billing_period always wins over this."""
+    if pmeta is None:
+        return "monthly"
+    if pmeta.default_billing_period:
+        return pmeta.default_billing_period
+    if pmeta.package_windows:
+        return pmeta.package_windows[-1]
+    return "monthly"
 
 # billing_period → package_history column
 BILLING_COL_MAP = {
