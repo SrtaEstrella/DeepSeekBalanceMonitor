@@ -44,6 +44,9 @@ mod windows_app {
     const COINIT_APARTMENTTHREADED: u32 = 0x2;
     const CLSCTX_INPROC_SERVER: u32 = 0x1;
     const RPC_E_CHANGED_MODE: i32 = 0x80010106u32 as i32;
+    const ERROR_ALREADY_EXISTS: u32 = 183;
+    const SINGLE_INSTANCE_MUTEX: &str = "Local\\DeepSeekBalanceMonitor.SingleInstance";
+    const HISTORY_DEDUP_SECONDS: i64 = 120;
     const CLSID_SHELL_LINK: Guid = Guid {
         data1: 0x00021401,
         data2: 0x0000,
@@ -210,6 +213,22 @@ mod windows_app {
     #[link(name = "kernel32")]
     extern "system" {
         fn LocalFree(mem: *mut c_void) -> *mut c_void;
+        fn CreateMutexW(
+            attributes: *mut c_void,
+            initial_owner: i32,
+            name: *const u16,
+        ) -> *mut c_void;
+        fn GetLastError() -> u32;
+    }
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn MessageBoxW(
+            hwnd: *mut c_void,
+            text: *const u16,
+            caption: *const u16,
+            message_type: u32,
+        ) -> i32;
     }
 
     #[derive(Clone, Serialize, Deserialize)]
@@ -572,6 +591,11 @@ mod windows_app {
     }
 
     pub fn run() -> Result<(), String> {
+        if let Err(error) = acquire_single_instance_lock() {
+            log_line(&error);
+            show_already_running_message();
+            return Err(error);
+        }
         nwg::init().map_err(|e| e.to_string())?;
         set_ui_font();
         let ui = AppUi::build().map_err(|e| e.to_string())?;
@@ -998,9 +1022,12 @@ mod windows_app {
                         })
                         .ok()
                 } else {
-                    consumption_rate_with_fallback(state.config.retention_days)
-                        .ok()
-                        .flatten()
+                    consumption_rate_with_fallback(
+                        state.config.retention_days,
+                        state.config.interval_minutes,
+                    )
+                    .ok()
+                    .flatten()
                 };
                 let message = balance_notification_message(
                     lang,
@@ -1348,7 +1375,7 @@ mod windows_app {
 
     fn write_http_response(stream: &mut TcpStream, status: &str, content_type: &str, body: &str) {
         let response = format!(
-            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.as_bytes().len()
         );
         if let Err(error) = stream.write_all(response.as_bytes()) {
@@ -1377,7 +1404,7 @@ mod windows_app {
                 })
                 .ok()
         } else {
-            consumption_rate_with_fallback(config.retention_days)
+            consumption_rate_with_fallback(config.retention_days, config.interval_minutes)
                 .ok()
                 .flatten()
         }
@@ -2192,7 +2219,8 @@ mod windows_app {
                 .size((0, 0))
                 .parent(&general_tab)
                 .build(&mut status_label)?;
-            let history_text = format_history_view(lang, config.retention_days, None);
+            let history_text =
+                format_history_view(lang, config.retention_days, None, config.interval_minutes);
             nwg::Label::builder()
                 .text(tr(lang, "history_days"))
                 .position((20, 20))
@@ -2826,7 +2854,12 @@ mod windows_app {
 
         fn refresh_history(&self) {
             let (days, currency) = self.history_filters();
-            let text = format_history_view(&self.current_language(), days, currency.as_deref());
+            let text = format_history_view(
+                &self.current_language(),
+                days,
+                currency.as_deref(),
+                self.base_config.interval_minutes,
+            );
             self.history_box.set_text(&text);
         }
 
@@ -2876,22 +2909,11 @@ mod windows_app {
             let mut config = self.base_config.clone();
             let lang = self.current_language();
             let api_key = self.api_input.text().trim().to_string();
-            if api_key.is_empty() {
-                if config.api_key.trim().is_empty() {
-                    return Err(tr(&lang, "api_key_empty").to_string());
-                }
-            } else {
-                store_secure_api_key(&api_key)?;
-                config.api_key = api_key;
+            if api_key.is_empty() && config.api_key.trim().is_empty() {
+                return Err(tr(&lang, "api_key_empty").to_string());
             }
             let og_api_key = self.og_api_key_input.text().trim().to_string();
-            if !og_api_key.is_empty() {
-                store_secure_value(OPENCODE_GO_API_KEY, &og_api_key)?;
-            }
             let cc_api_key = self.cc_api_key_input.text().trim().to_string();
-            if !cc_api_key.is_empty() {
-                store_secure_value(COMMAND_CODE_API_KEY, &cc_api_key)?;
-            }
             let interval_minutes = self
                 .interval_input
                 .text()
@@ -2959,6 +2981,17 @@ mod windows_app {
                 BTreeMap::new()
             };
             config.icon_stroke = self.icon_stroke.check_state() == nwg::CheckBoxState::Checked;
+            // 上面所有字段校验通过后才写凭据，避免校验失败时密钥已入库。
+            if !api_key.is_empty() {
+                store_secure_api_key(&api_key)?;
+                config.api_key = api_key;
+            }
+            if !og_api_key.is_empty() {
+                store_secure_value(OPENCODE_GO_API_KEY, &og_api_key)?;
+            }
+            if !cc_api_key.is_empty() {
+                store_secure_value(COMMAND_CODE_API_KEY, &cc_api_key)?;
+            }
             normalize_config(&mut config);
             Ok(config)
         }
@@ -3050,7 +3083,7 @@ mod windows_app {
     }
 
     fn api_window_to_usage(window: OpenCodeGoApiWindow, now: i64) -> OpenCodeGoUsage {
-        let usage_percent = window.percent.max(0.0);
+        let usage_percent = window.percent.clamp(0.0, 100.0);
         let reset_in_sec = window
             .resets_at
             .as_deref()
@@ -3336,7 +3369,9 @@ mod windows_app {
     }
 
     fn preferred_balance(balances: &BTreeMap<String, Balance>) -> Option<(&String, &Balance)> {
-        balances.iter().next()
+        balances
+            .get_key_value("CNY")
+            .or_else(|| balances.iter().next())
     }
 
     fn normalize_service_status(value: &str) -> &'static str {
@@ -3639,6 +3674,21 @@ mod windows_app {
     }
 
     fn load_font() -> Option<Font<'static>> {
+        thread_local! {
+            static FONT_BYTES: RefCell<Option<Vec<u8>>> = RefCell::new(None);
+        }
+        // 字体只加载一次：托盘每次刷新都重读字体文件开销大，缓存在线程内复用。
+        let bytes = FONT_BYTES.with(|cache| {
+            let mut cached = cache.borrow_mut();
+            if cached.is_none() {
+                *cached = read_font_bytes();
+            }
+            cached.as_ref().cloned()
+        });
+        bytes.and_then(Font::try_from_vec)
+    }
+
+    fn read_font_bytes() -> Option<Vec<u8>> {
         for path in [
             r"C:\Windows\Fonts\segoeuib.ttf",
             r"C:\Windows\Fonts\segoeui.ttf",
@@ -3646,8 +3696,8 @@ mod windows_app {
             r"C:\Windows\Fonts\arial.ttf",
         ] {
             if let Ok(bytes) = fs::read(path) {
-                if let Some(font) = Font::try_from_vec(bytes) {
-                    return Some(font);
+                if Font::try_from_vec(bytes.clone()).is_some() {
+                    return Some(bytes);
                 }
             }
         }
@@ -3713,10 +3763,14 @@ mod windows_app {
     }
 
     fn history_export_file(export_path: &str) -> PathBuf {
-        let dir = if export_path.trim().is_empty() {
+        let trimmed = export_path.trim();
+        let dir = if trimmed.is_empty() {
             user_home_dir()
+        } else if let Some(rest) = trimmed.strip_prefix("%USERPROFILE%") {
+            // 输入框占位符提示 %USERPROFILE%，这里必须真正展开，否则会生成字面量目录。
+            user_home_dir().join(rest.trim_start_matches(['\\', '/']))
         } else {
-            PathBuf::from(export_path.trim())
+            PathBuf::from(trimmed)
         };
         dir.join(history_export_filename())
     }
@@ -3739,10 +3793,23 @@ mod windows_app {
             .as_ref()
             .map(|value| !value.contains("\"ui_language\""))
             .unwrap_or(false);
-        let mut config = text
-            .as_deref()
-            .and_then(|value| serde_json::from_str::<AppConfig>(value).ok())
-            .unwrap_or_default();
+        let mut config = match text.as_deref().map(serde_json::from_str::<AppConfig>) {
+            Some(Ok(config)) => config,
+            Some(Err(error)) => {
+                let backup = config_dir().join("config.json.corrupt");
+                match fs::rename(config_file(), &backup) {
+                    Ok(()) => log_line(&format!(
+                        "Config parse failed: {error}. Corrupt file backed up to {}",
+                        backup.display()
+                    )),
+                    Err(_) => log_line(&format!(
+                        "Config parse failed: {error}. Could not back up the corrupt file."
+                    )),
+                }
+                AppConfig::default()
+            }
+            None => AppConfig::default(),
+        };
         let legacy_api_key = config.api_key.trim().to_string();
         let had_legacy_api_key = !legacy_api_key.is_empty();
         if missing_ui_language && matches!(config.language.as_str(), "zh" | "en") {
@@ -3818,15 +3885,6 @@ mod windows_app {
         let file = File::create(config_file())?;
         serde_json::to_writer_pretty(file, &safe)?;
         Ok(())
-    }
-
-    fn ensure_config_file(config: &AppConfig) -> Result<bool, String> {
-        let path = config_file();
-        if path.exists() {
-            return Ok(false);
-        }
-        save_config(config).map_err(|e| e.to_string())?;
-        Ok(true)
     }
 
     fn read_secure_api_key() -> Result<Option<String>, String> {
@@ -3989,8 +4047,35 @@ mod windows_app {
     ) -> Result<(), String> {
         let mut conn = open_history_db()?;
         let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let dedup_cutoff = (Local::now() - ChronoDuration::seconds(HISTORY_DEDUP_SECONDS))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         for (currency, balance) in balances {
+            let duplicate: i64 = tx
+                .query_row(
+                    "SELECT EXISTS(
+                        SELECT 1 FROM balance_history
+                        WHERE currency = ?1
+                          AND timestamp >= ?2
+                          AND ABS(total - ?3) < 0.000001
+                          AND ABS(topped - ?4) < 0.000001
+                          AND ABS(granted - ?5) < 0.000001
+                        LIMIT 1
+                    )",
+                    params![
+                        currency.as_str(),
+                        &dedup_cutoff,
+                        balance.total_balance,
+                        balance.topped_up_balance,
+                        balance.granted_balance
+                    ],
+                    |row| row.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            if duplicate != 0 {
+                continue;
+            }
             tx.execute(
                 "INSERT INTO balance_history (timestamp, currency, total, topped, granted, service_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
@@ -4059,7 +4144,12 @@ mod windows_app {
         })
     }
 
-    fn format_history_view(lang: &str, days: u64, currency: Option<&str>) -> String {
+    fn format_history_view(
+        lang: &str,
+        days: u64,
+        currency: Option<&str>,
+        interval_minutes: u64,
+    ) -> String {
         let records = history_records(days, currency, usize::MAX).unwrap_or_default();
         if records.is_empty() {
             return tr(lang, "history_empty").to_string();
@@ -4098,7 +4188,7 @@ mod windows_app {
                 format_amount(item.latest_granted)
             ));
         }
-        if let Ok(Some(rate)) = consumption_rate_with_fallback(days) {
+        if let Ok(Some(rate)) = consumption_rate_with_fallback(days, interval_minutes) {
             lines.push(consumption_rate_line(lang, &rate));
         } else {
             lines.push(tr(lang, "not_enough_data").to_string());
@@ -4149,7 +4239,10 @@ mod windows_app {
             .collect()
     }
 
-    fn consumption_rate(hours: i64) -> Result<Option<ConsumptionRate>, String> {
+    fn consumption_rate(
+        hours: i64,
+        interval_minutes: u64,
+    ) -> Result<Option<ConsumptionRate>, String> {
         let conn = open_history_db()?;
         let currency = match conn.query_row(
             "SELECT currency FROM balance_history
@@ -4181,13 +4274,14 @@ mod windows_app {
         for row in rows {
             records.push(row.map_err(|e| e.to_string())?);
         }
-        consumption_rate_from_records(&records)
+        consumption_rate_from_records(&records, interval_minutes)
     }
 
     fn consumption_rate_with_fallback(
         retention_days: u64,
+        interval_minutes: u64,
     ) -> Result<Option<ConsumptionRate>, String> {
-        if let Some(rate) = consumption_rate(7 * 24)? {
+        if let Some(rate) = consumption_rate(7 * 24, interval_minutes)? {
             return Ok(Some(rate));
         }
         let fallback_hours = retention_days
@@ -4197,11 +4291,12 @@ mod windows_app {
         if fallback_hours <= 7 * 24 {
             return Ok(None);
         }
-        consumption_rate(fallback_hours)
+        consumption_rate(fallback_hours, interval_minutes)
     }
 
     fn consumption_rate_from_records(
         records: &[HistoryRecord],
+        interval_minutes: u64,
     ) -> Result<Option<ConsumptionRate>, String> {
         if records.len() < 2 {
             return Ok(None);
@@ -4220,8 +4315,7 @@ mod windows_app {
 
         // Determine busy threshold m (in seconds)
         // m = max(30, 2 * interval_minutes) minutes
-        let interval_min = 10; // Default interval, could be read from config
-        let m_minutes = 30.max(2 * interval_min);
+        let m_minutes = 30i64.max(2 * interval_minutes as i64);
         let m_sec = (m_minutes * 60) as f64;
 
         // --- Build busy intervals ----------------------------------------
@@ -4510,6 +4604,10 @@ mod windows_app {
         let path = db_file();
         warn_if_recreating_database(&path);
         let conn = Connection::open(&path).map_err(|e| e.to_string())?;
+        conn.busy_timeout(Duration::from_secs(5))
+            .map_err(|e| e.to_string())?;
+        conn.pragma_update(None, "journal_mode", "WAL")
+            .map_err(|e| e.to_string())?;
         conn.execute(
             "CREATE TABLE IF NOT EXISTS balance_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -4520,6 +4618,16 @@ mod windows_app {
                 granted REAL NOT NULL,
                 service_status TEXT NOT NULL DEFAULT 'unknown'
             )",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_balance_history_timestamp ON balance_history (timestamp)",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_balance_history_currency_timestamp ON balance_history (currency, timestamp)",
             [],
         )
         .map_err(|e| e.to_string())?;
@@ -4722,6 +4830,31 @@ mod windows_app {
             })
         } else {
             Err(format_hresult("CoInitializeEx", hr))
+        }
+    }
+
+    fn acquire_single_instance_lock() -> Result<(), String> {
+        let name = wide_null(OsStr::new(SINGLE_INSTANCE_MUTEX));
+        // SAFETY: name is a null-terminated UTF-16 string. The returned handle is
+        // intentionally never closed so the mutex is held for the whole process.
+        let handle = unsafe { CreateMutexW(ptr::null_mut(), 0, name.as_ptr()) };
+        if handle.is_null() {
+            return Err("Failed to create single-instance mutex".to_string());
+        }
+        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            return Err("DeepSeek Balance Monitor is already running.".to_string());
+        }
+        Ok(())
+    }
+
+    fn show_already_running_message() {
+        let text = wide_null(OsStr::new(
+            "DeepSeek Balance Monitor is already running.\nDeepSeek 余额监控已在运行。",
+        ));
+        let caption = wide_null(OsStr::new(APP_NAME));
+        // SAFETY: text and caption are null-terminated UTF-16 strings.
+        unsafe {
+            MessageBoxW(ptr::null_mut(), text.as_ptr(), caption.as_ptr(), 0x40);
         }
     }
 

@@ -375,13 +375,7 @@ fn check_once() -> Result<(), (i32, String)> {
         let conn = open_history_db().map_err(fail)?;
         demo::prepare(&conn).map_err(fail)?;
         let balances = demo::balances(&conn).map_err(fail)?;
-        print_status(
-            Some(&balances),
-            None,
-            checked_at,
-            "none",
-            config.retention_days,
-        );
+        print_status(Some(&balances), None, checked_at, "none", &config);
         log_line("Demo balance check succeeded").map_err(fail)?;
         return Ok(());
     }
@@ -393,7 +387,7 @@ fn check_once() -> Result<(), (i32, String)> {
             Some("DeepSeek API key is not configured.\nRun dsmon set-key <api_key> to store it securely."),
             checked_at,
             &service_status,
-            config.retention_days,
+            &config,
         );
         return Err((2, String::new()));
     }
@@ -401,24 +395,12 @@ fn check_once() -> Result<(), (i32, String)> {
     match fetch_balance(&api_key, effective_http_proxy(&config)) {
         Ok(balances) => {
             save_balance_history(&balances, &service_status).map_err(fail)?;
-            print_status(
-                Some(&balances),
-                None,
-                checked_at,
-                &service_status,
-                config.retention_days,
-            );
+            print_status(Some(&balances), None, checked_at, &service_status, &config);
             log_line("Balance check succeeded").map_err(fail)?;
             Ok(())
         }
         Err(error) => {
-            print_status(
-                None,
-                Some(&error),
-                checked_at,
-                &service_status,
-                config.retention_days,
-            );
+            print_status(None, Some(&error), checked_at, &service_status, &config);
             log_line(&format!("Balance check failed: {error}")).ok();
             Err((1, String::new()))
         }
@@ -575,7 +557,8 @@ fn print_widget_status() -> Result<(), (i32, String)> {
     let latest_consumption_rate = if let Some(conn) = demo_conn.as_ref() {
         Some(demo::consumption_rate(conn).map_err(fail)?)
     } else {
-        consumption_rate_with_fallback(config.retention_days).unwrap_or(None)
+        consumption_rate_with_fallback(config.retention_days, config.interval_minutes)
+            .unwrap_or(None)
     };
     let history = if let Some(conn) = demo_conn.as_ref() {
         demo::history(conn, 24).map_err(fail)?
@@ -650,7 +633,9 @@ fn print_widget_status() -> Result<(), (i32, String)> {
                 .map(|(currency, balance)| (Some(currency.clone()), Some(balance.total_balance)))
                 .unwrap_or((None, None));
             let history = recent_balance_history(config.retention_days, 5).unwrap_or_default();
-            let rate = consumption_rate_with_fallback(config.retention_days).unwrap_or(None);
+            let rate =
+                consumption_rate_with_fallback(config.retention_days, config.interval_minutes)
+                    .unwrap_or(None);
             write_widget_status(WidgetStatus {
                 ok: true,
                 configured: true,
@@ -769,14 +754,20 @@ fn print_history(args: &[String]) -> Result<(), (i32, String)> {
     let config = load_config().map_err(fail)?;
     match args.first().map(String::as_str) {
         Some("export") => export_history(&args[1..], &config),
-        Some("json") => print_history_json(&args[1..], config.retention_days),
-        _ => print_history_summary(args, config.retention_days),
+        Some("json") => {
+            print_history_json(&args[1..], config.retention_days, config.interval_minutes)
+        }
+        _ => print_history_summary(args, config.retention_days, config.interval_minutes),
     }
 }
 
-fn print_history_summary(args: &[String], default_days: u64) -> Result<(), (i32, String)> {
+fn print_history_summary(
+    args: &[String],
+    default_days: u64,
+    interval_minutes: u64,
+) -> Result<(), (i32, String)> {
     let days = parse_history_days(args.first(), default_days)?;
-    let report = history_report(days, None, usize::MAX).map_err(fail)?;
+    let report = history_report(days, None, usize::MAX, interval_minutes).map_err(fail)?;
     if report.records.is_empty() {
         println!("No balance history.");
         return Ok(());
@@ -808,10 +799,14 @@ fn print_history_summary(args: &[String], default_days: u64) -> Result<(), (i32,
     Ok(())
 }
 
-fn print_history_json(args: &[String], default_days: u64) -> Result<(), (i32, String)> {
+fn print_history_json(
+    args: &[String],
+    default_days: u64,
+    interval_minutes: u64,
+) -> Result<(), (i32, String)> {
     let days = parse_history_days(args.first(), default_days)?;
     let currency = history_currency(args.get(1));
-    let report = history_report(days, currency.as_deref(), 500).map_err(fail)?;
+    let report = history_report(days, currency.as_deref(), 500, interval_minutes).map_err(fail)?;
     println!("{}", serde_json::to_string(&report).map_err(fail)?);
     Ok(())
 }
@@ -857,6 +852,7 @@ fn history_report(
     days: u64,
     currency: Option<&str>,
     limit: usize,
+    interval_minutes: u64,
 ) -> Result<HistoryReport, String> {
     let records = history_records(days, currency, limit)?;
     Ok(HistoryReport {
@@ -865,7 +861,7 @@ fn history_report(
         currencies: history_currencies(days)?,
         total_records: records.len(),
         summary: summarize_history(&records),
-        consumption_rate: consumption_rate_with_fallback(days)?,
+        consumption_rate: consumption_rate_with_fallback(days, interval_minutes)?,
         records,
     })
 }
@@ -910,7 +906,7 @@ fn summarize_history(records: &[HistoryRecord]) -> Vec<HistorySummary> {
         .collect()
 }
 
-fn consumption_rate(hours: i64) -> Result<Option<ConsumptionRate>, String> {
+fn consumption_rate(hours: i64, interval_minutes: u64) -> Result<Option<ConsumptionRate>, String> {
     let conn = open_history_db()?;
     let currency = match conn.query_row(
         "SELECT currency FROM balance_history
@@ -940,11 +936,14 @@ fn consumption_rate(hours: i64) -> Result<Option<ConsumptionRate>, String> {
     for row in rows {
         records.push(row.map_err(|e| e.to_string())?);
     }
-    consumption_rate_from_records(&records)
+    consumption_rate_from_records(&records, interval_minutes)
 }
 
-fn consumption_rate_with_fallback(retention_days: u64) -> Result<Option<ConsumptionRate>, String> {
-    if let Some(rate) = consumption_rate(7 * 24)? {
+fn consumption_rate_with_fallback(
+    retention_days: u64,
+    interval_minutes: u64,
+) -> Result<Option<ConsumptionRate>, String> {
+    if let Some(rate) = consumption_rate(7 * 24, interval_minutes)? {
         return Ok(Some(rate));
     }
     let fallback_hours = retention_days
@@ -954,11 +953,12 @@ fn consumption_rate_with_fallback(retention_days: u64) -> Result<Option<Consumpt
     if fallback_hours <= 7 * 24 {
         return Ok(None);
     }
-    consumption_rate(fallback_hours)
+    consumption_rate(fallback_hours, interval_minutes)
 }
 
 fn consumption_rate_from_records(
     records: &[HistoryRecord],
+    interval_minutes: u64,
 ) -> Result<Option<ConsumptionRate>, String> {
     if records.len() < 2 {
         return Ok(None);
@@ -977,8 +977,7 @@ fn consumption_rate_from_records(
 
     // Determine busy threshold m (in seconds)
     // m = max(30, 2 * interval_minutes) minutes
-    let interval_min = 10; // Default interval, could be read from config
-    let m_minutes = 30.max(2 * interval_min);
+    let m_minutes = 30i64.max(2 * interval_minutes as i64);
     let m_sec = (m_minutes * 60) as f64;
 
     // --- Build busy intervals ----------------------------------------
@@ -1511,7 +1510,7 @@ fn fetch_opencode_go_quota(api_key: &str, http_proxy: &str) -> Result<OpenCodeGo
 }
 
 fn api_window_to_usage(window: OpenCodeGoApiWindow, now: i64) -> OpenCodeGoUsage {
-    let usage_percent = window.percent.max(0.0);
+    let usage_percent = window.percent.clamp(0.0, 100.0);
     let reset_in_sec = window
         .resets_at
         .as_deref()
@@ -1901,7 +1900,7 @@ fn print_status(
     error: Option<&str>,
     checked_at: DateTime<Local>,
     service_status: &str,
-    retention_days: u64,
+    config: &AppConfig,
 ) {
     println!("DeepSeek Balance:");
     let has_balance =
@@ -1913,7 +1912,9 @@ fn print_status(
                 format_amount(balance.topped_up_balance),
                 format_amount(balance.granted_balance)
             );
-            if let Ok(Some(rate)) = consumption_rate_with_fallback(retention_days) {
+            if let Ok(Some(rate)) =
+                consumption_rate_with_fallback(config.retention_days, config.interval_minutes)
+            {
                 println!("📊 {}", consumption_rate_line(&rate));
             }
             true
@@ -1950,7 +1951,9 @@ fn summary(balances: &BTreeMap<String, Balance>) -> String {
 }
 
 fn preferred_balance(balances: &BTreeMap<String, Balance>) -> Option<(&String, &Balance)> {
-    balances.iter().next()
+    balances
+        .get_key_value("CNY")
+        .or_else(|| balances.iter().next())
 }
 
 fn balances_from_history(records: &[HistoryRecord]) -> BTreeMap<String, Balance> {
@@ -1985,12 +1988,11 @@ fn normalize_service_status(value: &str) -> &'static str {
 
 fn status_rank(status: &str) -> u8 {
     match status {
-        "none" => 0,
         "maintenance" => 1,
         "minor" => 2,
         "major" => 3,
         "critical" => 4,
-        _ => 5,
+        _ => 0,
     }
 }
 
@@ -2469,6 +2471,10 @@ fn open_history_db() -> Result<Connection, String> {
     let path = db_file().map_err(|e| e.to_string())?;
     warn_if_recreating_database(&path);
     let conn = Connection::open(&path).map_err(|e| e.to_string())?;
+    conn.busy_timeout(Duration::from_secs(5))
+        .map_err(|e| e.to_string())?;
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .map_err(|e| e.to_string())?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS balance_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2479,6 +2485,16 @@ fn open_history_db() -> Result<Connection, String> {
             granted REAL NOT NULL,
             service_status TEXT NOT NULL DEFAULT 'unknown'
         )",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_balance_history_timestamp ON balance_history (timestamp)",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_balance_history_currency_timestamp ON balance_history (currency, timestamp)",
         [],
     )
     .map_err(|e| e.to_string())?;

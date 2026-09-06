@@ -2,6 +2,29 @@
 
 All notable changes to DeepSeek Balance Monitor are documented here.
 
+## Rust v1.4.2 (2026-09-06)
+
+### Fixed
+
+- Rust Linux: an unrecognized service-status component ranked highest in `status_rank`, masking real `critical` outages — the CLI/widget showed "Status Unknown" instead of "Critical Outage"; unknown now ranks lowest, matching rust-windows
+- Both Rust implementations: the busy-hour consumption-rate algorithm hardcoded a 10-minute check interval when deciding whether a gap is idle; it now uses the configured `interval_minutes`, so larger intervals (e.g. 60 min) no longer have their normal polling gaps sliced as idle time, which underestimated the rate
+- Rust Windows: balance history rows are deduplicated with the same 120-second window as Rust Linux; previously every check inserted a row even with an unchanged balance, bloating the database (up to ~1440 rows/day per currency at a 1-minute interval)
+- Rust Windows: a corrupted `config.json` no longer silently resets all settings — the file is backed up as `config.json.corrupt` and the failure is logged
+- Rust Windows: the settings dialog validates all fields before persisting any API key; previously a new DeepSeek key was written to secure storage even when interval/threshold validation failed afterwards
+- Rust Windows: export paths starting with `%USERPROFILE%` are expanded; the placeholder suggested it but the raw string was used, creating a literal `%USERPROFILE%` directory
+- Both Rust implementations: OpenCode Go usage percent is clamped to 0–100 (the Linux CLI could print values above 100%)
+- Both Rust implementations: balance display and the low-balance threshold prefer the CNY balance when multiple currencies exist, instead of the alphabetically-first currency (a USD balance could be compared against the CNY threshold)
+
+### Changed
+
+- Both Rust implementations: the SQLite database now runs in WAL journal mode with a 5-second busy timeout and indexes on `timestamp` and (`currency`, `timestamp`); concurrent access (Windows UI thread vs. balance-check / OpenCode Go / Command Code / Rainmeter threads, Linux daemon vs. widget-status) no longer fails with "database is locked", and history queries use the indexes
+- Rust Windows: the tray icon font is loaded once per process (thread-local cache) instead of re-reading the font file on every tray refresh; unused `ensure_config_file` removed
+
+### Security
+
+- Rust Windows: launching a second copy is now blocked by a named mutex — the duplicate logs the failure, shows a native message box, and exits instead of running two tray icons racing on the same icon file and database
+- Rust Windows: the local Rainmeter HTTP server no longer sends `Access-Control-Allow-Origin: *`, so web pages open in the user's browser can no longer read balance/subscription data or trigger checks via CORS (Rainmeter's WebParser does not rely on CORS)
+
 ## Rust v1.4.1 (2026-09-01)
 
 ### Changed
