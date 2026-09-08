@@ -82,6 +82,34 @@ class AppStateTests(unittest.TestCase):
         state.service_status = {"api_operational": True}
         self.assertEqual(state.check_api_status_alert(), "recovered")
 
+    def test_restart_polling_rearms_after_cancel(self):
+        """Settings-save pattern: cancel_timer() alone must not leave the
+        automatic loop dead — restart_polling() has to re-arm a fresh timer."""
+        state = self._state()
+        state.running = True
+        calls = []
+        state._poll_cb = lambda: calls.append(1)
+        state.schedule_next_check(state._poll_cb, 3600)
+        timer1 = state._timer
+        self.assertIsNotNone(timer1)
+        state.restart_polling()  # what settings save now does
+        timer2 = state._timer
+        self.assertIsNotNone(timer2)
+        self.assertIsNot(timer1, timer2)
+        state.cancel_timer()
+        self.assertIsNone(state._timer)
+
+    def test_restart_polling_uses_configured_interval(self):
+        config = {"language": "en", "interval_minutes": 30}
+        with patch("src.core.app_state.load_config", return_value=config):
+            state = AppState()
+        state.running = True
+        state._poll_cb = lambda: None
+        state.restart_polling()  # interval_sec omitted -> reads config
+        self.assertIsNotNone(state._timer)
+        self.assertEqual(state._timer.interval, 30 * 60)
+        state.cancel_timer()
+
 class ConfigContractTests(unittest.TestCase):
     def test_v12_config_fields_and_notification_text_exist(self):
         for key in ("retention_days", "theme", "icon_colors", "icon_stroke",

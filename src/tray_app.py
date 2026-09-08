@@ -161,7 +161,7 @@ def _fetch_package(api, proxy_url=""):
         return api_id, None, str(e).split("\n")[0]
 
 
-def do_balance_check(app: AppState):
+def _do_balance_check_once(app: AppState):
     if app.demo_mode:
         with app._lock:
             app.balances = _DEMO["balances"]
@@ -171,8 +171,6 @@ def do_balance_check(app: AppState):
         if app.icon:
             app.icon.title = app.balance_tooltip()
             _update_icons(app)
-        interval_sec = int(app.config.get("interval_minutes", 10)) * 60
-        app.schedule_next_check(lambda: do_balance_check(app), interval_sec)
         return
 
     if not app.running:
@@ -209,10 +207,8 @@ def do_balance_check(app: AppState):
             apis = [pref] if pref else []
         if not apis:
             # one-hot with no preferred API: skip queries this round, keep last
-            # data untouched, and keep the poll loop alive (must reschedule here,
-            # since the tail of this function is skipped)
-            interval_sec = int(app.config.get("interval_minutes", 10)) * 60
-            app.schedule_next_check(lambda: do_balance_check(app), interval_sec)
+            # data untouched — the do_balance_check wrapper keeps the poll loop
+            # alive regardless of how this cycle ends
             return
         from concurrent.futures import ThreadPoolExecutor, as_completed
         proxy_url = cfg.get("http_proxy", "") if cfg.get("proxy_enabled") else ""
@@ -392,8 +388,27 @@ def do_balance_check(app: AppState):
     except Exception as e:
         log(f"Peak/valley reminder failed: {e}")
 
-    interval_sec = int(app.config.get("interval_minutes", 10)) * 60
-    app.schedule_next_check(lambda: do_balance_check(app), interval_sec)
+
+def do_balance_check(app: AppState):
+    """Run one balance-check cycle and guarantee the automatic loop survives it.
+
+    The automatic loop is a self-chaining timer: every cycle re-arms the next
+    one at its end. That re-arm must happen no matter how the cycle finishes —
+    success, an early return, or an unexpected exception — otherwise automatic
+    polling silently stops until the user triggers a manual check (the exact
+    failure reported: manual 立即查询 worked, automatic polling didn't). The
+    finally-block below is that guarantee; a caught exception is logged instead
+    of killing the chain. Callers that cancel the armed timer outside a cycle
+    (settings save) must re-arm it via AppState.restart_polling()."""
+    cb = getattr(app, "_poll_cb", None) or (lambda a=app: do_balance_check(a))
+    try:
+        _do_balance_check_once(app)
+    except Exception as e:
+        log(f"Balance check cycle failed: {e}")
+    finally:
+        if app.running:
+            interval_sec = int(app.config.get("interval_minutes", 10)) * 60
+            app.schedule_next_check(cb, interval_sec)
 
 
 # --- Low-Balance Notification ---------------------------------------
@@ -840,6 +855,9 @@ def main():
     app._tk_root = _tk_root
     app._main_window = None
     app._trigger_check = lambda a=app: threading.Thread(target=do_balance_check, args=(a,), daemon=True).start()
+    # entry callback for the automatic poll loop — do_balance_check re-arms it
+    # in a finally block after every cycle
+    app._poll_cb = lambda a=app: do_balance_check(a)
     app._rebuild_menu = lambda a=app: make_menu(a)
 
     proxy = app.config.get("http_proxy", "").strip()
