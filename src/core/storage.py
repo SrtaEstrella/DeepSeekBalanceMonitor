@@ -74,11 +74,20 @@ def get_refined_remaining_series(api_id: str, target: str = "monthly",
     the interpolation extends to historical data, not just the latest point.
 
     Model works on the usage series (positive deltas = consumption) and
-    returns REMAINING for display consistency: real_remaining =
-    100 - (usage_int + 0.5 - frac). Internally it warms up over a longer
-    window (90 days) so the front of the requested range already carries
-    established rate/prefix (no artificial .5 plateaus); only points within
-    the requested `days` are returned.
+    returns REMAINING for display consistency. The API's integer used% is
+    ROUNDED (true usage within obs±0.5), so every point keeps the estimate
+    inside (obs-0.5, obs+0.5] of ITS OWN observation — the refined remaining
+    stays within raw 100-obs ± 0.5 and is always consistent with the
+    observed rounded integer; the exact position is placed by real 5h-window
+    spend converted via the platform's window pool ratio (d_usd*100/tpool,
+    causal). The model is monotone within a billing period (remaining never
+    increases while the quota is open); a fresh period re-anchors at the
+    rounded midpoint (remaining = 100-obs).
+
+    Internally it warms up over a longer window (90 days) so the front of
+    the requested range already carries established rate/prefix (no
+    artificial .5 plateaus); only points within the requested `days` are
+    returned.
 
     Returns (timestamps, remaining_vals).
     """
@@ -118,58 +127,57 @@ def get_refined_remaining_series(api_id: str, target: str = "monthly",
             except Exception:
                 return 0.0
 
+        tpool = pools.get(target)
         ts_out, v_out = [], []
         # CAUSAL refinement: every point uses only data up to its own
         # timestamp (prefix accumulated per target period; rate from the most
         # recent segments BEFORE the point). New online rows never change
         # historical values.
-        from collections import deque
-        spend_cum = 0.0      # 5h spend $ since period start (prefix, causal)
-        rise_cum = 0.0       # coarse rise % since period start (prefix)
-        prev_ts = None
-        rate_q = deque(maxlen=4)
         u_cont = None        # continuous usage estimate (never quantized)
-        drift_check = 0
+        # Band margin: the API's integer used% is ROUNDED (usage within
+        # obs±0.5), so the continuous estimate may only move inside
+        # (obs-0.5, obs+0.5) — remaining stays within raw 100-obs ± 0.5.
+        # margin trims the band by 0.06 so 1-decimal display never rounds
+        # across a half boundary (x.5 ambiguity) while keeping every refined
+        # value consistent with the observed rounded integer.
+        disp_margin = 0.06
         for i, r in enumerate(rows):
             ts, h5, obs = r[0], r[1], r[2]
             if obs is None:
-                prev_ts = ts
                 continue
             if i > 0:
                 p_obs = rows[i-1][tidx]
                 if p_obs is not None and obs < p_obs:
-                    # period reset: re-anchor and reset prefix
-                    spend_cum = 0.0
-                    rise_cum = 0.0
-                    rate_q.clear()
-                    u_cont = obs + 0.5
-                    prev_ts = ts
-                    drift_check = 0
+                    # period reset: usage dropped -> re-anchor at the rounded
+                    # value's midpoint (remaining = 100-obs exactly)
+                    u_cont = obs
                     continue
                 a5, b5 = rows[i-1][1], h5
                 d_usd = 0.0
                 if a5 is not None and b5 is not None and b5 > a5:
                     d_usd = (b5 - a5) / 100.0 * fpool
-                    spend_cum += d_usd
-                if p_obs is not None and obs > p_obs:
-                    rise_cum += obs - p_obs
-                avg_per_coarse = (spend_cum / rise_cum) if (rise_cum > 0 and spend_cum > 0) else None
                 if u_cont is None:
-                    u_cont = obs + 0.5
+                    u_cont = obs
                 # only REAL 5h spend in this interval advances the estimate
                 # (consumption is intermittent — never smear a rate over
-                # every row, which overshoots the observed total)
-                if avg_per_coarse and d_usd > 0:
-                    u_cont += d_usd / avg_per_coarse
-                # band clamp: only the LOWER band is enforced (never let the
-                # estimate run below obs-0.5). No upper clamp — the line keeps
-                # falling with real consumption; a plateau can only mean
-                # genuinely zero spend.
-                if u_cont < obs - 0.5:
-                    u_cont = obs - 0.5
+                # every row, which overshoots the observed total). The KNOWN
+                # pool ratio converts $ -> target-window usage % (exact and
+                # causal — no empirical spend/rise ratio that a 5h window
+                # reset can bias).
+                if d_usd > 0:
+                    u_cont += d_usd * 100.0 / tpool
+                # band clamp (ROUND semantics): u_cont stays inside
+                # (obs-0.5, obs+0.5). The lower bound rescues the estimate
+                # when the coarse observation stepped up (the API saw a new
+                # rounded integer, so usage must be within its band); the
+                # upper bound keeps the line from claiming more consumption
+                # than the observed rounded integer allows. Refined
+                # remaining therefore always stays within raw 100-obs ± 0.5,
+                # with the exact position placed by real 5h consumption.
+                u_cont = min(max(u_cont, obs - 0.5 + disp_margin),
+                             obs + 0.5 - disp_margin)
             else:
-                u_cont = obs + 0.5
-            prev_ts = ts
+                u_cont = obs
             if ts < out_cutoff:
                 continue      # only the requested range is surfaced
             ts_out.append(ts)

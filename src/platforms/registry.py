@@ -29,7 +29,7 @@ class PlatformMeta:
     default_billing_period: str | None = None
     # Absolute window pool sizes (credits/$) for the interpolation model:
     # lets a finest-window consumption rate place the fractional part of a
-    # coarse window's integer remaining% (see storage.refine_remaining).
+    # coarse window's integer remaining% (see storage.get_refined_remaining_series).
     # None → no refinement (fall back to the raw integer value).
     window_pools: dict | None = None
     # Does this platform have a status page? (affects history table status column)

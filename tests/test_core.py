@@ -2,6 +2,7 @@ import tempfile
 import urllib.error
 import unittest
 import sys
+import sqlite3
 from pathlib import Path
 from unittest.mock import patch, Mock
 from src.platforms import deepseek as api_client
@@ -129,3 +130,97 @@ class MacKeystoreTests(unittest.TestCase):
 
             self.assertEqual(decrypt_api_key(encrypted, Path(data)), "test-key-value")
             self.assertEqual(decrypt_api_key(encrypted, Path(other)), "")
+
+class RefinedRemainingTests(unittest.TestCase):
+    """Regression for the OCGo interpolation bug.
+
+    The API's integer used% is ROUNDED (true usage within obs±0.5), so the
+    refined remaining must stay inside raw 100-obs ± 0.5 at every point and
+    must be monotone inside a billing period.
+
+    Historical failures:
+    - empirical spend/rise ratio biased low by 5h window resets inflated
+      every advance ~10% -> continuous usage drifted ~3 points ABOVE the
+      observed rounded integer (refined 63.0 vs raw 66)
+    - later floor-semantics band (obs-1, obs] forced refined remaining to
+      always be >= raw 100-obs (|refined-raw| up to +0.94), which is wrong
+      for a ROUNDED observation (true usage may sit anywhere in obs±0.5)
+    """
+
+    def _series(self, rows):
+        """rows: list of (timestamp, h5_percent, monthly_percent) sorted ASC."""
+        fd, db = tempfile.mkstemp(suffix=".db")
+        import os
+        os.close(fd)
+        conn = sqlite3.connect(db)
+        conn.execute("""CREATE TABLE package_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, api_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL, h5_percent REAL, h5_reset INTEGER,
+            weekly_percent REAL, weekly_reset INTEGER,
+            monthly_percent REAL, monthly_reset INTEGER, service_status TEXT)""")
+        for ts, h5, mo in rows:
+            conn.execute(
+                "INSERT INTO package_history (api_id, timestamp, h5_percent, "
+                "weekly_percent, monthly_percent) VALUES (?,?,?,?,?)",
+                ("tid", ts, h5, None, mo))
+        conn.commit()
+        conn.close()
+        real_conn = sqlite3.connect(db)
+        self.addCleanup(real_conn.close)
+        self.addCleanup(lambda: Path(db).unlink(missing_ok=True))
+        patch_db = patch("src.core.storage._connect_package", return_value=real_conn)
+        patch_db.start()
+        self.addCleanup(patch_db.stop)
+
+        cfg = {"apis": [{"id": "tid", "platform": "opencode_go"}]}
+        patch_cfg = patch("src.core.config.load_config", return_value=cfg)
+        patch_cfg.start()
+        self.addCleanup(patch_cfg.stop)
+
+        from src.core.storage import get_refined_remaining_series
+        ts_v, rem_v = get_refined_remaining_series("tid", target="monthly", days=30)
+        return ts_v, rem_v
+
+    def _ts(self, days_ago, hour=12):
+        from datetime import datetime, timedelta
+        d = datetime.now() - timedelta(days=days_ago)
+        return d.replace(hour=hour, minute=0, second=0).strftime("%Y-%m-%d %H:%M:%S")
+
+    def test_refined_stays_within_round_band_of_raw(self):
+        # Mirrors the reported case: monthly usage 34,35,36 with 5h spend in
+        # between and a 5h reset boundary (h5 drop). obs is ROUNDED, so each
+        # refined remaining must satisfy |refined - (100-obs)| <= 0.5.
+        base = 10  # enough days inside the 30-day surfaced window
+        rows = [
+            (self._ts(base + 2, 8), 30.0, 33.0),
+            (self._ts(base + 2, 9), 32.0, 33.0),
+            (self._ts(base + 2, 10), 35.0, 34.0),   # raw remaining 66
+            (self._ts(base + 2, 11), 41.0, 34.0),
+            (self._ts(base + 2, 12), 43.0, 34.0),
+            (self._ts(base + 1, 8), 5.0,  35.0),    # 5h reset, raw 65
+            (self._ts(base, 9), 10.0, 36.0),        # raw 64
+        ]
+        ts_v, rem_v = self._series(rows)
+        self.assertEqual(len(ts_v), len(rows))
+        obs = [r[2] for r in rows]
+        for ts, rem, o in zip(ts_v, rem_v, obs):
+            raw = 100 - o
+            self.assertLessEqual(abs(rem - raw), 0.5 + 1e-9,
+                                 f"{ts}: refined {rem:.2f} vs raw {raw}: "
+                                 f"drift {rem - raw:+.3f} > 0.5 (rounded obs)")
+
+    def test_monotone_within_period_and_causal(self):
+        rows = [
+            (self._ts(6, 8), 10.0, 20.0),
+            (self._ts(6, 9), 15.0, 20.0),
+            (self._ts(6, 10), 20.0, 21.0),
+            (self._ts(6, 11), 25.0, 21.0),
+            (self._ts(6, 12), 30.0, 22.0),
+            (self._ts(6, 13), 33.0, 22.0),
+        ]
+        ts_v, rem_v = self._series(rows)
+        prev = None
+        for rem in rem_v:
+            if prev is not None:
+                self.assertLessEqual(rem, prev + 1e-9)   # never rises within period
+            prev = rem
