@@ -139,7 +139,8 @@ PLATFORMS = {
         has_status_page=False,
         console_url="https://platform.stepfun.ai",
     ),
-    # Command Code — package windows; GOAT has a monthly credit pool, standard doesn't
+    # Command Code — the plan tier (and monthly pool) is inferred from the
+    # API's rolling window caps, so both entries can show all three windows.
     "command_code": PlatformMeta(
         key="command_code",
         display_name="Command Code",
@@ -147,7 +148,7 @@ PLATFORMS = {
         supports_payg=False,
         supports_package=True,
         console_url="https://commandcode.ai",
-        package_windows=["5h", "weekly"],
+        package_windows=["5h", "weekly", "monthly"],
         default_billing_period="weekly",
         has_status_page=False,
     ),
@@ -160,6 +161,7 @@ PLATFORMS = {
         console_url="https://commandcode.ai",
         package_windows=["5h", "weekly", "monthly"],
         default_billing_period="monthly",
+        window_pools={"5h": 14.0, "weekly": 35.0, "monthly": 70.0},
         has_status_page=False,
     ),
     # GLM Coding Plan — 5h + weekly token windows, monthly MCP call count

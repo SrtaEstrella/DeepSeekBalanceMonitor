@@ -1,14 +1,13 @@
 """
 Command Code (commandcode.ai) quota client — 5h / weekly / monthly windows.
 
-Two plan kinds (registered as separate platforms):
-  command_code_goat: GOAT plan — $10/mo for $70 monthly credits, unused roll over.
-    Monthly window is ESTIMATED: API only returns credits.monthlyCredits (USD
-    remaining); cap is the known GOAT constant 70. Because credits roll over,
-    remaining% may EXCEED 100% — we keep that value instead of clamping (app
-    convention: track REMAINING %, unlike the Rust build which shows used/cap).
-  command_code: standard plan — only 5h + weekly windows (like MiniMax),
-    no monthly window.
+The API returns no plan id, so the plan tier is inferred from the rolling
+window caps: (5h cap, weekly cap) -> monthly credit pool, per the official
+plan table at https://commandcode.ai/docs/resources/usage-limits (verified
+2026-09). Monthly is therefore ESTIMATED: the API only reports
+credits.monthlyCredits (USD remaining), so remaining% = monthlyCredits / pool.
+Values above 100% are kept (bonus credits) instead of clamping — app
+convention: track REMAINING %, unlike the Rust build which shows used/cap.
 
 Endpoints:
   GET https://api.commandcode.ai/alpha/whoami          → orgId (optional)
@@ -23,11 +22,29 @@ from src.platforms._http import http_get_json
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
 API_BASE = "https://api.commandcode.ai/"
-GOAT_MONTHLY_CREDITS = 70.0
+
+# Rolling window caps identify the plan uniquely; the monthly pool comes from
+# the official plan table. Uncatalogued caps -> no monthly window.
+PLAN_MONTHLY_CAPS = {
+    (3, 6): 10.0,      # Go
+    (14, 35): 70.0,    # GOAT
+    (16, 40): 80.0,    # Pro
+    (45, 90): 150.0,   # Max 10x
+    (90, 180): 300.0,  # Max 20x
+    (12, 24): 40.0,    # Team Pro
+}
 
 
-def _is_goat_plan(plan_id):
-    return bool(plan_id) and plan_id.replace("_", "-").lower().startswith("individual-goat")
+def _monthly_cap_from_windows(limits):
+    """Plan's monthly credit pool inferred from its rolling window caps.
+    None when the caps match no known plan (pay-as-you-go returns none)."""
+    five = limits.get("fiveHour") or {}
+    weekly = limits.get("weekly") or {}
+    try:
+        key = (round(float(five.get("cap") or 0)), round(float(weekly.get("cap") or 0)))
+    except (TypeError, ValueError):
+        return None
+    return PLAN_MONTHLY_CAPS.get(key)
 
 
 def _window_remaining(used, cap):
@@ -51,14 +68,14 @@ def _epoch_to_reset_sec(epoch):
     return max(0, int(value - datetime.now(timezone.utc).timestamp()))
 
 
-def fetch_command_code_quota(api_key: str, platform_key: str = "command_code_goat",
-                             http_proxy: str = "") -> dict:
+def fetch_command_code_quota(api_key: str, http_proxy: str = "") -> dict:
     """Fetch Command Code quota.
 
     Returns dict shaped like other package clients:
         {"5h": {"usage_percent","percent_remaining","reset_in_sec"}, "weekly": ..., "monthly": ...}
-    Any window absent from the API response is None. percent_remaining may
-    exceed 100% for the GOAT monthly estimate (rolled-over credits).
+    Any window absent from the API response is None. Monthly is derived from
+    the plan pool inferred from the window caps; percent_remaining may exceed
+    100% when the account carries bonus/rolled-over credits.
 
     Raises ValueError on failure (401 → Invalid API key).
     """
@@ -96,7 +113,6 @@ def fetch_command_code_quota(api_key: str, platform_key: str = "command_code_goa
 
     credits = data.get("credits") or {}
     limits = data.get("windowLimits") or {}
-    plan_id = credits.get("planId")
 
     result = {"5h": None, "weekly": None, "monthly": None}
     for key, src in (("5h", limits.get("fiveHour")), ("weekly", limits.get("weekly"))):
@@ -113,13 +129,12 @@ def fetch_command_code_quota(api_key: str, platform_key: str = "command_code_goa
             "reset_in_sec": _epoch_to_reset_sec(src.get("resetAt")),
         }
 
-    # monthly: GOAT platform only, and planId must confirm GOAT
-    goat_mode = platform_key == "command_code_goat"
+    # monthly: plan pool (inferred from the caps) minus the reported balance
+    monthly_cap = _monthly_cap_from_windows(limits)
     monthly_remaining = credits.get("monthlyCredits")
-    if goat_mode and _is_goat_plan(plan_id) and monthly_remaining is not None:
-        remaining = float(monthly_remaining)
-        # NOT clamped: rolled-over credits legitimately exceed 100% remaining
-        remaining_pct = remaining / GOAT_MONTHLY_CREDITS * 100.0
+    if monthly_cap and monthly_remaining is not None:
+        remaining_pct = float(monthly_remaining) / monthly_cap * 100.0
+        # NOT clamped: bonus/rolled-over credits can exceed 100% remaining
         result["monthly"] = {
             "usage_percent": max(0.0, 100.0 - remaining_pct),
             "percent_remaining": remaining_pct,

@@ -2,6 +2,46 @@
 
 所有值得记录的变更均记录于此。
 
+## Rust v1.4.3 (2026-09-12)
+
+### 修复
+
+- Rust 双端：API 不再返回 `credits.planId` 后，Command Code 月度用量会从 CLI、Plasma 小组件、Windows 设置窗口与 Rainmeter `cc_monthly_*` 字段中消失；现改为由 5h/周滚动窗口上限（cap）自动识别档位与月度额度——Go 10 / GOAT 70 / Pro 80 / Max 10× 150 / Max 20× 300 / Team Pro 40 credits
+- Rust 双端：月度用量按 `档位额度 − credits.monthlyCredits` 计算并钳制在额度内，加成额度不再产生负数；窗口 cap 未收录的套餐（纯充值账号无滚动窗口）月度仍显示不可用
+
+### 变更
+
+- Command Code：不再解析 `credits.planId`，移除固定 GOAT 70 credits 常量；月度窗口不再要求账号被识别为 GOAT 套餐
+
+### Python 版（本次发布不升版本号）
+
+- Command Code 月度窗口改用同一套窗口 cap 反推逻辑，标准 `command_code` 条目也能显示月度；`command_code_goat` 条目新增 `window_pools`（14/35/70）参与插值
+- 保存设置后自动轮询不再静默停止：余额查询循环在 `finally` 中重挂载，设置保存改用 `restart_polling()` 原子取消并重启
+- OCGo 精化剩余改为 round 区间语义（`|精化 − 原始| ≤ 0.5`，与 API 取整整数一致），替代原 floor 区间
+
+## Rust v1.4.2 (2026-09-06)
+
+### 修复
+
+- Rust Linux：`status_rank` 把未识别的服务状态排成最高级，状态页中无法解析的组件会掩盖真实的 `critical` 故障——CLI/小组件显示「状态未知」而非「关键不可用」；未知状态改为最低级，与 rust-windows 一致
+- Rust 双端：忙时消耗速率算法在判断空闲切片时硬编码 10 分钟查询间隔，现改用配置的 `interval_minutes`；较大间隔（如 60 分钟）下正常轮询间隔不再被误判为空闲切片（此前会低估速率）
+- Rust Windows：余额历史与 Rust Linux 一致按 120 秒窗口去重；此前每次查询都无条件入库，即使余额无变化，1 分钟间隔下每币种每天最多膨胀约 1440 行
+- Rust Windows：`config.json` 损坏时不再静默重置全部配置——先备份为 `config.json.corrupt` 并写入日志
+- Rust Windows：设置窗口先校验全部字段再保存凭据；此前查询间隔/预警线校验失败时，新 DeepSeek Key 已提前写入加密存储
+- Rust Windows：导出路径真正展开 `%USERPROFILE%` 前缀；此前占位符只是提示，实际按字面量使用，会生成名为 `%USERPROFILE%` 的目录
+- Rust 双端：OpenCode Go 用量百分比钳制到 0–100（此前 Linux CLI 可能打印超过 100% 的值）
+- Rust 双端：多币种并存时余额展示与低余额预警优先取 CNY，而非字典序第一个币种（此前可能拿 USD 数值与人民币预警线比较）
+
+### 变更
+
+- Rust 双端：SQLite 启用 WAL 日志模式与 5 秒 busy timeout，并为 `timestamp` 与（`currency`, `timestamp`）建索引；并发访问（Windows UI 线程与余额查询 / OpenCode Go / Command Code / Rainmeter 线程，Linux 守护进程与 widget-status 命令）不再因锁冲突报 "database is locked"，历史查询走索引
+- Rust Windows：托盘字体改为进程内加载一次（线程局部缓存），不再每次刷新托盘都读字体文件；移除未使用的 `ensure_config_file`
+
+### 安全
+
+- Rust Windows：通过命名互斥体阻止重复启动——第二实例记录日志、弹出原生提示框后退出，不再出现两个托盘图标争抢同一图标文件与数据库
+- Rust Windows：本地 Rainmeter HTTP 服务不再返回 `Access-Control-Allow-Origin: *`，浏览器中打开的任意网页无法再借 CORS 读取余额/订阅数据或触发查询（Rainmeter 的 WebParser 不依赖 CORS）
+
 ## Rust v1.4.1 (2026-09-01)
 
 ### 变更

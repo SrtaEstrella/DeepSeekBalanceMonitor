@@ -98,7 +98,7 @@ HTTP 状态码成功时返回 `200 OK`，`Content-Type` 使用
 Rainmeter 当前使用正则按字段名解析，字段名必须保持一致；为降低兼容风险，
 建议按上方顺序输出字段。
 
-## Command Code 额度字段（v1.4.0 接口预留）
+## Command Code 额度字段（v1.4.0 新增，v1.4.3 修复月度）
 
 Rust v1.4.0 已为 Rust Windows / Rust Linux 新增 Command Code 额度显示（设置窗口
 「订阅」页、`dsmon command-code` CLI、Plasma 小组件）。Rust Windows 版
@@ -131,11 +131,16 @@ Rust v1.4.0 已为 Rust Windows / Rust Linux 新增 Command Code 额度显示（
 
 - 后台按 OpenCode Go 相同的节奏（每 10 分钟）查询 Command Code 官方接口，
   查询失败时保留上次成功数据，仅在 `cc_error` 中体现。
+- 月度窗口为推算值：cap 由 5h/周窗口 cap 对照官方档位表唯一确定（Go 10 /
+  GOAT 70 / Pro 80 / Max 10× 150 / Max 20× 300 / Team Pro 40 credits），
+  已用 = 档位额度 − `credits.monthlyCredits`。v1.4.3 起月度对全部可识别档位可用；
+  v1.4.0–1.4.2 仅 GOAT 套餐可推算，且依赖 API 已移除的 `credits.planId`（实际已失效）。
+- 纯充值账号没有滚动窗口，档位无法识别，`cc_monthly_*` 为占位值。
 - 未配置 API Key 时 `cc_configured` 为 `false`，额度字段为占位值。
 - Rainmeter 皮肤正则按字段名解析，新增字段不影响旧皮肤兼容。
 
-Python 版对接 Rainmeter 时，可暂不实现 `cc_*` 字段；待 Python 版需要展示
-Command Code 额度时，按本约定补齐即可。
+Python 版托盘已展示 Command Code 额度（`src/platforms/command_code.py`，档位识别
+逻辑与 Rust 一致）；对接 Rainmeter 时按本约定补齐 `cc_*` 字段即可。
 
 ## 状态映射
 

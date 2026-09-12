@@ -25,7 +25,6 @@ const OPENCODE_GO_API_URL: &str = "https://opencode.ai/zen/go/v1/usage";
 const OPENCODE_GO_API_KEY: &str = "opencode_go_api_key";
 const COMMAND_CODE_API_BASE: &str = "https://api.commandcode.ai/";
 const COMMAND_CODE_API_KEY: &str = "command_code_api_key";
-const GOAT_MONTHLY_CREDITS: f64 = 70.0;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct AppConfig {
@@ -196,8 +195,6 @@ struct CommandCodeApiResponse {
 
 #[derive(Deserialize)]
 struct CommandCodeApiCredits {
-    #[serde(rename = "planId", default)]
-    plan_id: Option<String>,
     #[serde(rename = "monthlyCredits", default)]
     monthly_credits: Option<f64>,
 }
@@ -375,13 +372,7 @@ fn check_once() -> Result<(), (i32, String)> {
         let conn = open_history_db().map_err(fail)?;
         demo::prepare(&conn).map_err(fail)?;
         let balances = demo::balances(&conn).map_err(fail)?;
-        print_status(
-            Some(&balances),
-            None,
-            checked_at,
-            "none",
-            config.retention_days,
-        );
+        print_status(Some(&balances), None, checked_at, "none", &config);
         log_line("Demo balance check succeeded").map_err(fail)?;
         return Ok(());
     }
@@ -393,7 +384,7 @@ fn check_once() -> Result<(), (i32, String)> {
             Some("DeepSeek API key is not configured.\nRun dsmon set-key <api_key> to store it securely."),
             checked_at,
             &service_status,
-            config.retention_days,
+            &config,
         );
         return Err((2, String::new()));
     }
@@ -401,24 +392,12 @@ fn check_once() -> Result<(), (i32, String)> {
     match fetch_balance(&api_key, effective_http_proxy(&config)) {
         Ok(balances) => {
             save_balance_history(&balances, &service_status).map_err(fail)?;
-            print_status(
-                Some(&balances),
-                None,
-                checked_at,
-                &service_status,
-                config.retention_days,
-            );
+            print_status(Some(&balances), None, checked_at, &service_status, &config);
             log_line("Balance check succeeded").map_err(fail)?;
             Ok(())
         }
         Err(error) => {
-            print_status(
-                None,
-                Some(&error),
-                checked_at,
-                &service_status,
-                config.retention_days,
-            );
+            print_status(None, Some(&error), checked_at, &service_status, &config);
             log_line(&format!("Balance check failed: {error}")).ok();
             Err((1, String::new()))
         }
@@ -575,7 +554,8 @@ fn print_widget_status() -> Result<(), (i32, String)> {
     let latest_consumption_rate = if let Some(conn) = demo_conn.as_ref() {
         Some(demo::consumption_rate(conn).map_err(fail)?)
     } else {
-        consumption_rate_with_fallback(config.retention_days).unwrap_or(None)
+        consumption_rate_with_fallback(config.retention_days, config.interval_minutes)
+            .unwrap_or(None)
     };
     let history = if let Some(conn) = demo_conn.as_ref() {
         demo::history(conn, 24).map_err(fail)?
@@ -650,7 +630,9 @@ fn print_widget_status() -> Result<(), (i32, String)> {
                 .map(|(currency, balance)| (Some(currency.clone()), Some(balance.total_balance)))
                 .unwrap_or((None, None));
             let history = recent_balance_history(config.retention_days, 5).unwrap_or_default();
-            let rate = consumption_rate_with_fallback(config.retention_days).unwrap_or(None);
+            let rate =
+                consumption_rate_with_fallback(config.retention_days, config.interval_minutes)
+                    .unwrap_or(None);
             write_widget_status(WidgetStatus {
                 ok: true,
                 configured: true,
@@ -769,14 +751,20 @@ fn print_history(args: &[String]) -> Result<(), (i32, String)> {
     let config = load_config().map_err(fail)?;
     match args.first().map(String::as_str) {
         Some("export") => export_history(&args[1..], &config),
-        Some("json") => print_history_json(&args[1..], config.retention_days),
-        _ => print_history_summary(args, config.retention_days),
+        Some("json") => {
+            print_history_json(&args[1..], config.retention_days, config.interval_minutes)
+        }
+        _ => print_history_summary(args, config.retention_days, config.interval_minutes),
     }
 }
 
-fn print_history_summary(args: &[String], default_days: u64) -> Result<(), (i32, String)> {
+fn print_history_summary(
+    args: &[String],
+    default_days: u64,
+    interval_minutes: u64,
+) -> Result<(), (i32, String)> {
     let days = parse_history_days(args.first(), default_days)?;
-    let report = history_report(days, None, usize::MAX).map_err(fail)?;
+    let report = history_report(days, None, usize::MAX, interval_minutes).map_err(fail)?;
     if report.records.is_empty() {
         println!("No balance history.");
         return Ok(());
@@ -808,10 +796,14 @@ fn print_history_summary(args: &[String], default_days: u64) -> Result<(), (i32,
     Ok(())
 }
 
-fn print_history_json(args: &[String], default_days: u64) -> Result<(), (i32, String)> {
+fn print_history_json(
+    args: &[String],
+    default_days: u64,
+    interval_minutes: u64,
+) -> Result<(), (i32, String)> {
     let days = parse_history_days(args.first(), default_days)?;
     let currency = history_currency(args.get(1));
-    let report = history_report(days, currency.as_deref(), 500).map_err(fail)?;
+    let report = history_report(days, currency.as_deref(), 500, interval_minutes).map_err(fail)?;
     println!("{}", serde_json::to_string(&report).map_err(fail)?);
     Ok(())
 }
@@ -857,6 +849,7 @@ fn history_report(
     days: u64,
     currency: Option<&str>,
     limit: usize,
+    interval_minutes: u64,
 ) -> Result<HistoryReport, String> {
     let records = history_records(days, currency, limit)?;
     Ok(HistoryReport {
@@ -865,7 +858,7 @@ fn history_report(
         currencies: history_currencies(days)?,
         total_records: records.len(),
         summary: summarize_history(&records),
-        consumption_rate: consumption_rate_with_fallback(days)?,
+        consumption_rate: consumption_rate_with_fallback(days, interval_minutes)?,
         records,
     })
 }
@@ -910,7 +903,7 @@ fn summarize_history(records: &[HistoryRecord]) -> Vec<HistorySummary> {
         .collect()
 }
 
-fn consumption_rate(hours: i64) -> Result<Option<ConsumptionRate>, String> {
+fn consumption_rate(hours: i64, interval_minutes: u64) -> Result<Option<ConsumptionRate>, String> {
     let conn = open_history_db()?;
     let currency = match conn.query_row(
         "SELECT currency FROM balance_history
@@ -940,11 +933,14 @@ fn consumption_rate(hours: i64) -> Result<Option<ConsumptionRate>, String> {
     for row in rows {
         records.push(row.map_err(|e| e.to_string())?);
     }
-    consumption_rate_from_records(&records)
+    consumption_rate_from_records(&records, interval_minutes)
 }
 
-fn consumption_rate_with_fallback(retention_days: u64) -> Result<Option<ConsumptionRate>, String> {
-    if let Some(rate) = consumption_rate(7 * 24)? {
+fn consumption_rate_with_fallback(
+    retention_days: u64,
+    interval_minutes: u64,
+) -> Result<Option<ConsumptionRate>, String> {
+    if let Some(rate) = consumption_rate(7 * 24, interval_minutes)? {
         return Ok(Some(rate));
     }
     let fallback_hours = retention_days
@@ -954,11 +950,12 @@ fn consumption_rate_with_fallback(retention_days: u64) -> Result<Option<Consumpt
     if fallback_hours <= 7 * 24 {
         return Ok(None);
     }
-    consumption_rate(fallback_hours)
+    consumption_rate(fallback_hours, interval_minutes)
 }
 
 fn consumption_rate_from_records(
     records: &[HistoryRecord],
+    interval_minutes: u64,
 ) -> Result<Option<ConsumptionRate>, String> {
     if records.len() < 2 {
         return Ok(None);
@@ -977,8 +974,7 @@ fn consumption_rate_from_records(
 
     // Determine busy threshold m (in seconds)
     // m = max(30, 2 * interval_minutes) minutes
-    let interval_min = 10; // Default interval, could be read from config
-    let m_minutes = 30.max(2 * interval_min);
+    let m_minutes = 30i64.max(2 * interval_minutes as i64);
     let m_sec = (m_minutes * 60) as f64;
 
     // --- Build busy intervals ----------------------------------------
@@ -1511,7 +1507,7 @@ fn fetch_opencode_go_quota(api_key: &str, http_proxy: &str) -> Result<OpenCodeGo
 }
 
 fn api_window_to_usage(window: OpenCodeGoApiWindow, now: i64) -> OpenCodeGoUsage {
-    let usage_percent = window.percent.max(0.0);
+    let usage_percent = window.percent.clamp(0.0, 100.0);
     let reset_in_sec = window
         .resets_at
         .as_deref()
@@ -1650,10 +1646,15 @@ fn fetch_command_code_quota(api_key: &str, http_proxy: &str) -> Result<CommandCo
         .json()
         .map_err(|e| format!("Command Code JSON parse failed: {e}"))?;
     let now = Local::now().timestamp();
-    let monthly = command_code_monthly_window(
-        payload.credits.plan_id.as_deref(),
-        payload.credits.monthly_credits,
-    );
+    let monthly_cap = payload
+        .window_limits
+        .five_hour
+        .as_ref()
+        .zip(payload.window_limits.weekly.as_ref())
+        .and_then(|(five_hour, weekly)| {
+            command_code_monthly_cap(five_hour.cap.max(0.0), weekly.cap.max(0.0))
+        });
+    let monthly = command_code_monthly_window(monthly_cap, payload.credits.monthly_credits);
     let quota = CommandCodeQuota {
         five_hour: payload
             .window_limits
@@ -1713,29 +1714,33 @@ fn epoch_to_reset_seconds(epoch: Option<f64>, now: i64) -> i64 {
         .unwrap_or(0)
 }
 
+/// Plan credit pools keyed by the plan's rolling window caps, per
+/// https://commandcode.ai/docs/resources/usage-limits (verified 2026-09).
+/// (5h cap, weekly cap) -> monthly credits; every plan is unique here.
+fn command_code_monthly_cap(five_hour_cap: f64, weekly_cap: f64) -> Option<f64> {
+    match (five_hour_cap.round() as i64, weekly_cap.round() as i64) {
+        (3, 6) => Some(10.0),     // Go
+        (14, 35) => Some(70.0),   // GOAT
+        (16, 40) => Some(80.0),   // Pro
+        (45, 90) => Some(150.0),  // Max 10x
+        (90, 180) => Some(300.0), // Max 20x
+        (12, 24) => Some(40.0),   // Team Pro
+        // 未收录档位（含无窗口的纯充值账号）：不推算月度
+        _ => None,
+    }
+}
+
 fn command_code_monthly_window(
-    plan_id: Option<&str>,
+    monthly_cap: Option<f64>,
     monthly_credits: Option<f64>,
 ) -> Option<CommandCodeWindow> {
-    let is_goat = plan_id
-        .map(|plan| {
-            plan.replace('_', "-")
-                .to_ascii_lowercase()
-                .starts_with("individual-goat")
+    monthly_cap
+        .zip(monthly_credits)
+        .map(|(cap, remaining)| CommandCodeWindow {
+            used: (cap - remaining).clamp(0.0, cap),
+            cap,
+            reset_in_sec: 0,
         })
-        .unwrap_or(false);
-    if is_goat {
-        monthly_credits.map(|remaining| {
-            let used = (GOAT_MONTHLY_CREDITS - remaining).clamp(0.0, GOAT_MONTHLY_CREDITS);
-            CommandCodeWindow {
-                used,
-                cap: GOAT_MONTHLY_CREDITS,
-                reset_in_sec: 0,
-            }
-        })
-    } else {
-        None
-    }
 }
 
 fn urlencode(value: &str) -> String {
@@ -1901,7 +1906,7 @@ fn print_status(
     error: Option<&str>,
     checked_at: DateTime<Local>,
     service_status: &str,
-    retention_days: u64,
+    config: &AppConfig,
 ) {
     println!("DeepSeek Balance:");
     let has_balance =
@@ -1913,7 +1918,9 @@ fn print_status(
                 format_amount(balance.topped_up_balance),
                 format_amount(balance.granted_balance)
             );
-            if let Ok(Some(rate)) = consumption_rate_with_fallback(retention_days) {
+            if let Ok(Some(rate)) =
+                consumption_rate_with_fallback(config.retention_days, config.interval_minutes)
+            {
                 println!("📊 {}", consumption_rate_line(&rate));
             }
             true
@@ -1950,7 +1957,9 @@ fn summary(balances: &BTreeMap<String, Balance>) -> String {
 }
 
 fn preferred_balance(balances: &BTreeMap<String, Balance>) -> Option<(&String, &Balance)> {
-    balances.iter().next()
+    balances
+        .get_key_value("CNY")
+        .or_else(|| balances.iter().next())
 }
 
 fn balances_from_history(records: &[HistoryRecord]) -> BTreeMap<String, Balance> {
@@ -1985,12 +1994,11 @@ fn normalize_service_status(value: &str) -> &'static str {
 
 fn status_rank(status: &str) -> u8 {
     match status {
-        "none" => 0,
         "maintenance" => 1,
         "minor" => 2,
         "major" => 3,
         "critical" => 4,
-        _ => 5,
+        _ => 0,
     }
 }
 
@@ -2469,6 +2477,10 @@ fn open_history_db() -> Result<Connection, String> {
     let path = db_file().map_err(|e| e.to_string())?;
     warn_if_recreating_database(&path);
     let conn = Connection::open(&path).map_err(|e| e.to_string())?;
+    conn.busy_timeout(Duration::from_secs(5))
+        .map_err(|e| e.to_string())?;
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .map_err(|e| e.to_string())?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS balance_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2479,6 +2491,16 @@ fn open_history_db() -> Result<Connection, String> {
             granted REAL NOT NULL,
             service_status TEXT NOT NULL DEFAULT 'unknown'
         )",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_balance_history_timestamp ON balance_history (timestamp)",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_balance_history_currency_timestamp ON balance_history (currency, timestamp)",
         [],
     )
     .map_err(|e| e.to_string())?;
@@ -2998,10 +3020,9 @@ mod tests {
 
     #[test]
     fn parses_command_code_api_json() {
-        // 模拟 /alpha/billing/credits 的真实响应
+        // 模拟 /alpha/billing/credits 的真实响应（GOAT 档：5h 14 / 周 35 / 月 70）
         let payload = r#"{
             "credits": {
-                "planId": "individual-goat-monthly",
                 "monthlyCredits": 48,
                 "purchasedCredits": 2.5,
                 "freeCredits": 1.5
@@ -3015,6 +3036,12 @@ mod tests {
         let parsed: CommandCodeApiResponse =
             serde_json::from_str(payload).expect("API response parses");
         let now = 1_767_225_600; // 2026-01-01T00:00:00Z
+        let monthly_cap = parsed
+            .window_limits
+            .five_hour
+            .as_ref()
+            .zip(parsed.window_limits.weekly.as_ref())
+            .and_then(|(five_hour, weekly)| command_code_monthly_cap(five_hour.cap, weekly.cap));
         let quota = CommandCodeQuota {
             five_hour: parsed
                 .window_limits
@@ -3024,10 +3051,7 @@ mod tests {
                 .window_limits
                 .weekly
                 .map(|window| api_cc_window_to_window(window, now)),
-            monthly: command_code_monthly_window(
-                parsed.credits.plan_id.as_deref(),
-                parsed.credits.monthly_credits,
-            ),
+            monthly: command_code_monthly_window(monthly_cap, parsed.credits.monthly_credits),
         };
         let five_hour = quota.five_hour.expect("five hour window");
         assert_eq!(five_hour.used, 4.2);
@@ -3037,23 +3061,38 @@ mod tests {
         let weekly = quota.weekly.expect("weekly window");
         assert_eq!(weekly.used, 17.5);
         assert_eq!(weekly.cap, 35.0);
-        let monthly = quota.monthly.expect("goat monthly window");
-        assert_eq!(monthly.cap, GOAT_MONTHLY_CREDITS);
+        let monthly = quota.monthly.expect("monthly window");
+        assert_eq!(monthly.cap, 70.0);
         assert!((monthly.used - 22.0).abs() < 1e-9);
         assert_eq!(monthly.reset_in_sec, 0);
 
-        // 非 GOAT 套餐不推算月度上限
-        let non_goat = r#"{
-            "credits": {"planId": "individual-pro-monthly", "monthlyCredits": 12},
-            "windowLimits": {"fiveHour": {"used": 1.0, "cap": 10, "resetAt": 0}}
-        }"#;
-        let parsed: CommandCodeApiResponse =
-            serde_json::from_str(non_goat).expect("non-goat API response parses");
-        let monthly = command_code_monthly_window(
-            parsed.credits.plan_id.as_deref(),
-            parsed.credits.monthly_credits,
+        // 档位映射（官方文档表：5h/周 cap -> 月额度）
+        assert_eq!(
+            [
+                command_code_monthly_cap(3.0, 6.0),
+                command_code_monthly_cap(14.0, 35.0),
+                command_code_monthly_cap(16.0, 40.0),
+                command_code_monthly_cap(45.0, 90.0),
+                command_code_monthly_cap(90.0, 180.0),
+                command_code_monthly_cap(12.0, 24.0),
+            ],
+            [
+                Some(10.0),
+                Some(70.0),
+                Some(80.0),
+                Some(150.0),
+                Some(300.0),
+                Some(40.0),
+            ]
         );
-        assert!(monthly.is_none());
+        // 未收录档位（含无窗口的纯充值账号）不推算月度
+        assert_eq!(command_code_monthly_cap(10.0, 20.0), None);
+        assert!(command_code_monthly_window(None, Some(48.0)).is_none());
+        assert!(command_code_monthly_window(Some(70.0), None).is_none());
+        // 月度剩余高于档位（促销加成）时已用夹到 0
+        let promo = command_code_monthly_window(Some(70.0), Some(90.0)).expect("promo window");
+        assert_eq!(promo.used, 0.0);
+        assert_eq!(promo.cap, 70.0);
 
         // 毫秒/秒时间戳归一化
         assert_eq!(

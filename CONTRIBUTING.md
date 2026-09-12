@@ -26,7 +26,7 @@ src/
 │   ├─ minimax.py           套餐额度（TLS 重试 x3）+ MiniMax 状态页
 │   ├─ kimi.py              按量余额 CN(CNY)/Global(USD)
 │   ├─ stepfun.py           按量余额 CN(CNY)/Global(USD)，仅 prepaid
-│   ├─ command_code.py      Command Code 套餐（GOAT/标准两模式）
+│   ├─ command_code.py      Command Code 客户端（窗口 cap 反推档位）
 │   └─ opencode.py          OCGo 套餐额度
 ├─ ui/                    全部 tkinter 界面
 │   ├─ main_window.py       懒构建 tabs 主窗
@@ -74,11 +74,12 @@ src/
 ### 2. Command Code 平台（`src/platforms/command_code.py`）
 
 - 接口：`GET https://api.commandcode.ai/alpha/whoami`（取 orgId，失败容忍）→ `alpha/billing/credits`（Bearer 认证；无 orgId 也可查）
-- 两种 API 类型（分开的平台 key）：
-  - `command_code`（标准）：仅 5h/weekly 两窗（类 minimax），无 monthly；默认周窗口首选
-  - `command_code_goat`：GOAT 套餐 $10/月=$70 credits；monthly 为推算——API 只给 `credits.monthlyCredits`（USD 剩余），cap 硬编码 70；仅当 planId（`_`→`-` 小写）以 `individual-goat` 开头才推算，否则 monthly=None；默认月窗口首选
+- 档位自动识别（平台 key 只决定默认计费窗口与插值池）：
+  - API 不返回套餐标识（`planId` 已移除）；月度 cap 由 5h/周窗口 cap 对照官方档位表唯一确定：Go 10 / GOAT 70 / Pro 80 / Max 10× 150 / Max 20× 300 / Team Pro 40 credits；两个平台条目都能显示 monthly
+  - `credits.monthlyCredits` 为月度剩余（USD）：Python `剩余% = remaining/cap`；Rust `used = clamp(cap − remaining, 0, cap)`；cap 未收录（纯充值账号无滚动窗口）→ monthly 不可用
+  - `command_code` 默认周窗口首选；`command_code_goat` 默认月窗口首选并带 `window_pools`（14/35/70）参与插值
 - 统一统计“剩余”而非已用：各窗口产出 `percent_remaining` 为主，`usage_percent` 仅派生（100−剩余，最低 0）
-- GOAT 结转语义：剩余可 >100%——`monthlyCredits/70*100` 不 clamp（滚动结余合法超满额）；5h/week 仍 clamp [0,100]
+- 剩余可 >100%（加成/结余）——Python 端 `monthlyCredits/cap*100` 不 clamp；Rust 端以 cap 内钳制呈现已用；5h/week 仍 clamp [0,100]
 - 窗口数据 `{name: usage_percent, percent_remaining, reset_in_sec}`；resetAt 秒/毫秒归一；used/cap 兼容数字或数字字符串
 - billing_period 平台默认贯通各消费点：icon_renderer、history_dialog（信息栏/折线/日志列/容耗图 `_get_billing_col`）、tray 通知栏均按 `get_platform(...).default_billing_period` 解析；API 表单未选项时落平台默认
 - 若 5h/week/monthly 全缺 → ValueError（无窗口可显示）
@@ -89,7 +90,7 @@ src/
 - **取整语义实证为 round**（区间交集实验排除 floor 5%；绝对重建排除 ceil 0.4%）
 - **池比换算**：5h=$12 / 周=$30 / 月=$60（`window_pools`）；细粒度 5h 实际消耗美元 / 每 1% 粗额平均美元 = 档内消耗进度
 - 模型：`剩余 = 100 − (起步 usage+0.5 + Σ 每行区间真实 5h 消耗$ ÷ 每粗% 平均$)`；**仅按真实消耗推进**（不摊速率），下钳防穿越，**严格因果**（每点只用前驱，新增在线行不影响历史值）；无 5h 消耗行保持平段（真无消耗）
-- 5h 自身取整（自身窗口整数）不作处理；无 `window_pools` 平台（minimax/glm/command_code）回落原始整数
+- 5h 自身取整（自身窗口整数）不作处理；无 `window_pools` 的平台（minimax/glm、command_code 标准条目）回落原始整数
 
 ### 3. 管理 Tab `src/manage_frame.py`（合并 API管理+流水）
 
@@ -106,7 +107,7 @@ src/
 
 - 信息栏：Text widget（固定像素×DPI holder + pack_propagate(False)）
   - payg：大字加粗余额（tag_raise("big") 保证优先级）+ 今日消耗/30d日均 + 状态 + 速率 + 上次查询
-  - package：各窗口 `标签 [ttk.Progressbar] 剩余%（X重置）`（window_create 内嵌，样式 `ok/warn/crit.Horizontal.TProgressbar` 按余量三档配色）+ 日消耗 + 状态；剩余>100%（GOAT 结转）文本保留、进度条满格
+  - package：各窗口 `标签 [ttk.Progressbar] 剩余%（X重置）`（window_create 内嵌，样式 `ok/warn/crit.Horizontal.TProgressbar` 按余量三档配色）+ 日消耗 + 状态；剩余>100%（加成/结余）文本保留、进度条满格
   - 无数据时显示错误行但仍渲染日消耗/状态
   - 渲染异常兜底：_update_info 外壳 try/except 记日志显示"数据不足"
 - 数据源：`app._api_cache[选中api_id]`，缓存空且=首选时回退全局状态
@@ -174,7 +175,7 @@ Ledger 树列由 `package_windows` + `has_status_page` 动态决定（package �
 
 - rust-linux：CLI+守护+Plasma 小组件（`dsmon`），工具链固定 1.77.2（rust-toolchain.toml）；用户级安装免 sudo
 - rust-windows：nwg 原生 GUI，声明系统 DPI 感知（app.manifest + high-dpi feature，字体必须 size_absolute）；Command Code 额度显示 + Subscriptions 页
-- Command Code monthly 双端口径对照：Rust 展示 used/cap（已用口径），Python 统一剩余口径且剩余可 >100%（结余结转）
+- Command Code monthly 双端口径对照：Rust 展示 used/cap（`档位额度 − monthlyCredits` 钳制），Python 统一剩余口径且剩余可 >100%（加成结余）
 - 双端统一 rustls+webpki-roots 内嵌证书（根证书数据靠升级 webpki-roots 依赖维护）
 - Rust 端验证由 CI（rockylinux:8 容器 + cargo +1.77.2）承担
 
@@ -185,7 +186,7 @@ Ledger 树列由 `package_windows` + `has_status_page` 动态决定（package �
 | `src/core/paths.py` | 叶子常量+log，无 src 依赖 |
 | `src/platforms/registry.py` | 平台注册表（12 平台）+ BILLING_COL_MAP + STATUS_ICON + default_billing_period |
 | `src/platforms/_http.py` | 共享 install_proxy/http_get_json/format_reset_short |
-| `src/platforms/command_code.py` | Command Code 客户端（GOAT monthly 估算/标准 5h+weekly） |
+| `src/platforms/command_code.py` | Command Code 客户端（5h/weekly + 按窗口 cap 反推档位月度额度） |
 | `src/core/config.py` | DEFAULT_CONFIG(retention 180/daily_spend_*)、多API CRUD、i18n _T 字典 |
 | `src/core/secure_settings.py` | Fernet+SQLite 加密存储 |
 | `src/core/storage.py` | 双表 + get_consumption_rate(billing_period) + get_today_spend |

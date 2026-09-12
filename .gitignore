@@ -17,3 +17,5 @@ target/
 .cargo/
 **/.cargo/
 *.rs.bk
+.codex/
+.commandcode/
