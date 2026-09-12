@@ -30,7 +30,7 @@ Rainmeter 小组件预览图
 - Rainmeter 桌面小工具：仅本地可访问的状态接口；`.rmskin` 发布打包。Rust/Python Windows 双版均已支持。
 - Rainmeter `/widget-status` 现包含 OpenCode Go 额度字段（`og_*`），后台每 10 分钟刷新；接口约定与 Python 版实施建议见 `rainmeter-widget/PYTHON_RAINMETER_INTEGRATION.md`。
 - OpenCode Go 额度显示（Rust 版）：改用官方 OpenCode Go API（`opencode.ai/zen/go/v1/usage`，Bearer API Key 认证），展示 5 小时滚动 / 每周 / 每月三档用量；凭据加密存于 SQLite，绝不写入 config.json。
-- Command Code 额度显示（Rust 版）：调用 `api.commandcode.ai` 计费接口（Bearer API Key 认证），展示 5 小时 / 每周 / 每月三档用量（GOAT 套餐按 70 credits 推算月度窗口）；Windows 设置窗口与 Plasma 小组件各新增「订阅」页，并排展示 OpenCode Go 与 Command Code 额度，全部 API Key 在「账户」页输入。Linux CLI：`dsmon command-code` / `dsmon command-code set-key` / `dsmon command-code json`。
+- Command Code 额度显示（Rust 版）：调用 `api.commandcode.ai` 计费接口（Bearer API Key 认证），展示 5 小时 / 每周 / 每月三档用量；月度窗口按档位推算——由 5h/周滚动窗口上限（cap）对照官方档位表自动识别（Go 10 / GOAT 70 / Pro 80 / Max 10× 150 / Max 20× 300 / Team Pro 40 credits）；Windows 设置窗口与 Plasma 小组件各新增「订阅」页，并排展示 OpenCode Go 与 Command Code 额度，全部 API Key 在「账户」页输入。Linux CLI：`dsmon command-code` / `dsmon command-code set-key` / `dsmon command-code json`。
 - Rust 双端统一 TLS 栈（rustls + 内嵌 webpki-roots）：不依赖系统证书库，Windows 版在 Windows 7/8.1 上开箱即用并支持 TLS 1.3。
 
 Rust Linux 版本限定：

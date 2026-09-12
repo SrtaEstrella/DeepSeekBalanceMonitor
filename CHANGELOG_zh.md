@@ -2,6 +2,23 @@
 
 所有值得记录的变更均记录于此。
 
+## Rust v1.4.3 (2026-09-12)
+
+### 修复
+
+- Rust 双端：API 不再返回 `credits.planId` 后，Command Code 月度用量会从 CLI、Plasma 小组件、Windows 设置窗口与 Rainmeter `cc_monthly_*` 字段中消失；现改为由 5h/周滚动窗口上限（cap）自动识别档位与月度额度——Go 10 / GOAT 70 / Pro 80 / Max 10× 150 / Max 20× 300 / Team Pro 40 credits
+- Rust 双端：月度用量按 `档位额度 − credits.monthlyCredits` 计算并钳制在额度内，加成额度不再产生负数；窗口 cap 未收录的套餐（纯充值账号无滚动窗口）月度仍显示不可用
+
+### 变更
+
+- Command Code：不再解析 `credits.planId`，移除固定 GOAT 70 credits 常量；月度窗口不再要求账号被识别为 GOAT 套餐
+
+### Python 版（本次发布不升版本号）
+
+- Command Code 月度窗口改用同一套窗口 cap 反推逻辑，标准 `command_code` 条目也能显示月度；`command_code_goat` 条目新增 `window_pools`（14/35/70）参与插值
+- 保存设置后自动轮询不再静默停止：余额查询循环在 `finally` 中重挂载，设置保存改用 `restart_polling()` 原子取消并重启
+- OCGo 精化剩余改为 round 区间语义（`|精化 − 原始| ≤ 0.5`，与 API 取整整数一致），替代原 floor 区间
+
 ## Rust v1.4.2 (2026-09-06)
 
 ### 修复

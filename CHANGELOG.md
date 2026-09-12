@@ -2,6 +2,23 @@
 
 All notable changes to DeepSeek Balance Monitor are documented here.
 
+## Rust v1.4.3 (2026-09-12)
+
+### Fixed
+
+- Both Rust implementations: Command Code monthly usage disappeared from the CLI, the Plasma widget, the Windows settings window and the Rainmeter `cc_monthly_*` fields once the API stopped returning `credits.planId`; the plan tier (and its monthly credit pool) is now inferred from the rolling window caps (5h/weekly), which identify the plan uniquely — Go 10 / GOAT 70 / Pro 80 / Max 10× 150 / Max 20× 300 / Team Pro 40 credits
+- Both Rust implementations: monthly usage is `pool − credits.monthlyCredits`, clamped to the pool, so bonus credits can no longer produce a negative usage; plans whose window caps match no known tier (pay-as-you-go has no rolling windows) keep the monthly window unavailable
+
+### Changed
+
+- Command Code: `credits.planId` parsing and the fixed GOAT 70-credit constant are gone; the monthly window no longer requires the account to be identified as a GOAT plan
+
+### Python implementation (no version bump in this release)
+
+- Command Code monthly window uses the same window-cap inference instead of the removed `planId`, and the standard `command_code` platform entry shows the monthly window too; the `command_code_goat` entry gains `window_pools` (14/35/70) for refining
+- Automatic polling no longer stops silently after saving settings: balance-check cycles re-arm themselves in a `finally` block, and settings save calls `restart_polling()` to cancel and re-arm atomically
+- OCGo refined remaining uses round-band semantics (`|refined − raw| ≤ 0.5`, matching the API's rounded integer) instead of the previous floor band
+
 ## Rust v1.4.2 (2026-09-06)
 
 ### Fixed
