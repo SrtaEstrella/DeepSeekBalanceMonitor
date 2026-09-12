@@ -101,3 +101,56 @@ class MacKeystoreTests(unittest.TestCase):
 
             self.assertEqual(decrypt_api_key(encrypted, Path(data)), "test-key-value")
             self.assertEqual(decrypt_api_key(encrypted, Path(other)), "")
+
+
+class CommandCodeQuotaTests(unittest.TestCase):
+    def test_monthly_cap_inferred_from_window_caps(self):
+        from src.platforms import command_code
+        for (five, weekly), cap in {
+            (3, 6): 10.0,      # Go
+            (14, 35): 70.0,    # GOAT
+            (16, 40): 80.0,    # Pro
+            (45, 90): 150.0,   # Max 10x
+            (90, 180): 300.0,  # Max 20x
+            (12, 24): 40.0,    # Team Pro
+        }.items():
+            limits = {"fiveHour": {"cap": five}, "weekly": {"cap": weekly}}
+            self.assertEqual(command_code._monthly_cap_from_windows(limits), cap)
+        # Uncatalogued caps / no windows (pay-as-you-go) -> no monthly window
+        self.assertIsNone(command_code._monthly_cap_from_windows(
+            {"fiveHour": {"cap": 10}, "weekly": {"cap": 20}}))
+        self.assertIsNone(command_code._monthly_cap_from_windows({}))
+
+    def test_fetch_quota_reports_monthly_without_plan_id(self):
+        from src.platforms import command_code
+        whoami = {"success": True, "org": None}
+        credits = {
+            "credits": {"monthlyCredits": 55.0},
+            "windowLimits": {
+                "fiveHour": {"used": 0, "cap": 14, "resetAt": 0},
+                "weekly": {"used": 3.5, "cap": 35, "resetAt": 0},
+            },
+        }
+        with patch("src.platforms.command_code.http_get_json",
+                   side_effect=[whoami, credits]):
+            quota = command_code.fetch_command_code_quota("test-key")
+        self.assertAlmostEqual(quota["monthly"]["percent_remaining"], 55.0 / 70.0 * 100.0)
+        self.assertAlmostEqual(quota["monthly"]["usage_percent"], 100.0 - 55.0 / 70.0 * 100.0)
+        self.assertEqual(quota["monthly"]["reset_in_sec"], 0)
+        self.assertAlmostEqual(quota["weekly"]["percent_remaining"], 90.0)
+
+    def test_bonus_credits_are_not_clamped(self):
+        from src.platforms import command_code
+        whoami = {"success": True, "org": None}
+        credits = {
+            "credits": {"monthlyCredits": 90.0},
+            "windowLimits": {
+                "fiveHour": {"used": 0, "cap": 14},
+                "weekly": {"used": 1.0, "cap": 35},
+            },
+        }
+        with patch("src.platforms.command_code.http_get_json",
+                   side_effect=[whoami, credits]):
+            quota = command_code.fetch_command_code_quota("test-key")
+        self.assertGreater(quota["monthly"]["percent_remaining"], 100.0)
+        self.assertEqual(quota["monthly"]["usage_percent"], 0.0)

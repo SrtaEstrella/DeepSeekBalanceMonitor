@@ -25,7 +25,6 @@ const OPENCODE_GO_API_URL: &str = "https://opencode.ai/zen/go/v1/usage";
 const OPENCODE_GO_API_KEY: &str = "opencode_go_api_key";
 const COMMAND_CODE_API_BASE: &str = "https://api.commandcode.ai/";
 const COMMAND_CODE_API_KEY: &str = "command_code_api_key";
-const GOAT_MONTHLY_CREDITS: f64 = 70.0;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct AppConfig {
@@ -196,8 +195,6 @@ struct CommandCodeApiResponse {
 
 #[derive(Deserialize)]
 struct CommandCodeApiCredits {
-    #[serde(rename = "planId", default)]
-    plan_id: Option<String>,
     #[serde(rename = "monthlyCredits", default)]
     monthly_credits: Option<f64>,
 }
@@ -1649,10 +1646,15 @@ fn fetch_command_code_quota(api_key: &str, http_proxy: &str) -> Result<CommandCo
         .json()
         .map_err(|e| format!("Command Code JSON parse failed: {e}"))?;
     let now = Local::now().timestamp();
-    let monthly = command_code_monthly_window(
-        payload.credits.plan_id.as_deref(),
-        payload.credits.monthly_credits,
-    );
+    let monthly_cap = payload
+        .window_limits
+        .five_hour
+        .as_ref()
+        .zip(payload.window_limits.weekly.as_ref())
+        .and_then(|(five_hour, weekly)| {
+            command_code_monthly_cap(five_hour.cap.max(0.0), weekly.cap.max(0.0))
+        });
+    let monthly = command_code_monthly_window(monthly_cap, payload.credits.monthly_credits);
     let quota = CommandCodeQuota {
         five_hour: payload
             .window_limits
@@ -1712,29 +1714,33 @@ fn epoch_to_reset_seconds(epoch: Option<f64>, now: i64) -> i64 {
         .unwrap_or(0)
 }
 
+/// Plan credit pools keyed by the plan's rolling window caps, per
+/// https://commandcode.ai/docs/resources/usage-limits (verified 2026-09).
+/// (5h cap, weekly cap) -> monthly credits; every plan is unique here.
+fn command_code_monthly_cap(five_hour_cap: f64, weekly_cap: f64) -> Option<f64> {
+    match (five_hour_cap.round() as i64, weekly_cap.round() as i64) {
+        (3, 6) => Some(10.0),     // Go
+        (14, 35) => Some(70.0),   // GOAT
+        (16, 40) => Some(80.0),   // Pro
+        (45, 90) => Some(150.0),  // Max 10x
+        (90, 180) => Some(300.0), // Max 20x
+        (12, 24) => Some(40.0),   // Team Pro
+        // 未收录档位（含无窗口的纯充值账号）：不推算月度
+        _ => None,
+    }
+}
+
 fn command_code_monthly_window(
-    plan_id: Option<&str>,
+    monthly_cap: Option<f64>,
     monthly_credits: Option<f64>,
 ) -> Option<CommandCodeWindow> {
-    let is_goat = plan_id
-        .map(|plan| {
-            plan.replace('_', "-")
-                .to_ascii_lowercase()
-                .starts_with("individual-goat")
+    monthly_cap
+        .zip(monthly_credits)
+        .map(|(cap, remaining)| CommandCodeWindow {
+            used: (cap - remaining).clamp(0.0, cap),
+            cap,
+            reset_in_sec: 0,
         })
-        .unwrap_or(false);
-    if is_goat {
-        monthly_credits.map(|remaining| {
-            let used = (GOAT_MONTHLY_CREDITS - remaining).clamp(0.0, GOAT_MONTHLY_CREDITS);
-            CommandCodeWindow {
-                used,
-                cap: GOAT_MONTHLY_CREDITS,
-                reset_in_sec: 0,
-            }
-        })
-    } else {
-        None
-    }
 }
 
 fn urlencode(value: &str) -> String {
@@ -3014,10 +3020,9 @@ mod tests {
 
     #[test]
     fn parses_command_code_api_json() {
-        // 模拟 /alpha/billing/credits 的真实响应
+        // 模拟 /alpha/billing/credits 的真实响应（GOAT 档：5h 14 / 周 35 / 月 70）
         let payload = r#"{
             "credits": {
-                "planId": "individual-goat-monthly",
                 "monthlyCredits": 48,
                 "purchasedCredits": 2.5,
                 "freeCredits": 1.5
@@ -3031,6 +3036,12 @@ mod tests {
         let parsed: CommandCodeApiResponse =
             serde_json::from_str(payload).expect("API response parses");
         let now = 1_767_225_600; // 2026-01-01T00:00:00Z
+        let monthly_cap = parsed
+            .window_limits
+            .five_hour
+            .as_ref()
+            .zip(parsed.window_limits.weekly.as_ref())
+            .and_then(|(five_hour, weekly)| command_code_monthly_cap(five_hour.cap, weekly.cap));
         let quota = CommandCodeQuota {
             five_hour: parsed
                 .window_limits
@@ -3040,10 +3051,7 @@ mod tests {
                 .window_limits
                 .weekly
                 .map(|window| api_cc_window_to_window(window, now)),
-            monthly: command_code_monthly_window(
-                parsed.credits.plan_id.as_deref(),
-                parsed.credits.monthly_credits,
-            ),
+            monthly: command_code_monthly_window(monthly_cap, parsed.credits.monthly_credits),
         };
         let five_hour = quota.five_hour.expect("five hour window");
         assert_eq!(five_hour.used, 4.2);
@@ -3053,23 +3061,38 @@ mod tests {
         let weekly = quota.weekly.expect("weekly window");
         assert_eq!(weekly.used, 17.5);
         assert_eq!(weekly.cap, 35.0);
-        let monthly = quota.monthly.expect("goat monthly window");
-        assert_eq!(monthly.cap, GOAT_MONTHLY_CREDITS);
+        let monthly = quota.monthly.expect("monthly window");
+        assert_eq!(monthly.cap, 70.0);
         assert!((monthly.used - 22.0).abs() < 1e-9);
         assert_eq!(monthly.reset_in_sec, 0);
 
-        // 非 GOAT 套餐不推算月度上限
-        let non_goat = r#"{
-            "credits": {"planId": "individual-pro-monthly", "monthlyCredits": 12},
-            "windowLimits": {"fiveHour": {"used": 1.0, "cap": 10, "resetAt": 0}}
-        }"#;
-        let parsed: CommandCodeApiResponse =
-            serde_json::from_str(non_goat).expect("non-goat API response parses");
-        let monthly = command_code_monthly_window(
-            parsed.credits.plan_id.as_deref(),
-            parsed.credits.monthly_credits,
+        // 档位映射（官方文档表：5h/周 cap -> 月额度）
+        assert_eq!(
+            [
+                command_code_monthly_cap(3.0, 6.0),
+                command_code_monthly_cap(14.0, 35.0),
+                command_code_monthly_cap(16.0, 40.0),
+                command_code_monthly_cap(45.0, 90.0),
+                command_code_monthly_cap(90.0, 180.0),
+                command_code_monthly_cap(12.0, 24.0),
+            ],
+            [
+                Some(10.0),
+                Some(70.0),
+                Some(80.0),
+                Some(150.0),
+                Some(300.0),
+                Some(40.0),
+            ]
         );
-        assert!(monthly.is_none());
+        // 未收录档位（含无窗口的纯充值账号）不推算月度
+        assert_eq!(command_code_monthly_cap(10.0, 20.0), None);
+        assert!(command_code_monthly_window(None, Some(48.0)).is_none());
+        assert!(command_code_monthly_window(Some(70.0), None).is_none());
+        // 月度剩余高于档位（促销加成）时已用夹到 0
+        let promo = command_code_monthly_window(Some(70.0), Some(90.0)).expect("promo window");
+        assert_eq!(promo.used, 0.0);
+        assert_eq!(promo.cap, 70.0);
 
         // 毫秒/秒时间戳归一化
         assert_eq!(

@@ -149,7 +149,7 @@ def _fetch_package(api, proxy_url=""):
             quota = fetch_minimax_quota(platform_key=plat, api_key=key, http_proxy=proxy_url)
         elif plat.startswith("command_code"):
             from src.platforms.command_code import fetch_command_code_quota
-            quota = fetch_command_code_quota(api_key=key, platform_key=plat, http_proxy=proxy_url)
+            quota = fetch_command_code_quota(api_key=key, http_proxy=proxy_url)
         elif plat.startswith("glm_"):
             from src.platforms.glm import fetch_glm_quota
             quota = fetch_glm_quota(api_key=key, platform_key=plat, http_proxy=proxy_url)
