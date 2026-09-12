@@ -1,4 +1,4 @@
-﻿"""
+"""
 Application state - holds balances, config, timer, and helper methods.
 """
 import os
@@ -32,6 +32,7 @@ class AppState:
         self._alert_suppressed_pkg = False
         self._check_generation = 0  # incremented on API switch to discard stale results
         self._api_cache = {}  # {api_id: {"balances": {...}, "package_data": {...}, "service_status": {...}, "error": str}}
+        self._poll_cb = None  # auto-poll entry callback, registered by the tray app
 
     @property
     def lang(self):
@@ -212,6 +213,30 @@ class AppState:
             if self._timer:
                 self._timer.cancel()
                 self._timer = None
+
+    def restart_polling(self, interval_sec=None):
+        """Cancel any armed wait and immediately re-arm the automatic poll.
+
+        The automatic loop is a self-chaining timer: every cycle re-arms the
+        next one at its end. Cancelling the timer outside a cycle (settings
+        save) leaves the loop with no pending event — nothing fires until the
+        user triggers a manual check — so cancellation and re-arming must stay
+        together. interval_sec defaults to the configured interval_minutes."""
+        with self._lock:
+            if not self.running:
+                return
+            if self._timer:
+                self._timer.cancel()
+                self._timer = None
+            cb = getattr(self, "_poll_cb", None)
+            if cb is None:
+                from src.tray_app import do_balance_check
+                cb = lambda a=self: do_balance_check(a)
+            if interval_sec is None:
+                interval_sec = int(self.config.get("interval_minutes", 10)) * 60
+            self._timer = threading.Timer(interval_sec, cb)
+            self._timer.daemon = True
+            self._timer.start()
 
 
 _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"

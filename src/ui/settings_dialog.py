@@ -378,7 +378,12 @@ class SettingsFrame(ttk.Frame):
                         self.app._main_window = None
                 except Exception:
                     pass
-            self.app.cancel_timer()
+            # Settings changed (interval_minutes etc.) — restart the automatic
+            # poll loop so the new value applies and polling does NOT silently
+            # stop. A bare cancel_timer() cancels the only pending poll event
+            # and nothing re-arms the self-chaining loop until a manual check;
+            # restart_polling keeps cancellation and re-arming together.
+            self.app.restart_polling()
             # load new preferred API's cached data into app state
             pref_api_id = self.app.config.get("preferred_api_id", "")
             cached = getattr(self.app, "_api_cache", {}).get(pref_api_id, {})
