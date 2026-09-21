@@ -140,4 +140,6 @@ jobs:
             - Linux: x86_64 CLI daemon package with systemd user service and KDE Plasma widget.
             - Rainmeter: Windows desktop widget skin package.
           generate_release_notes: true
+          # 1.x 与 2.x 并行维护：发布只补资产，Latest 留给 2.x。
+          make_latest: false
           overwrite_files: true

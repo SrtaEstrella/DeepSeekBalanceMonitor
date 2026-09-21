@@ -1614,24 +1614,27 @@ mod windows_app {
     struct SettingsWindow {
         base_config: AppConfig,
         window: nwg::Window,
-        _tabs: nwg::TabsContainer,
-        _account_tab: nwg::Tab,
-        _general_tab: nwg::Tab,
-        _history_tab: nwg::Tab,
-        _subscription_tab: nwg::Tab,
+        // 左侧导航的四个按钮，与右侧四个页面容器一一对应。
+        nav_buttons: [nwg::Button; 4],
+        page_frames: [nwg::Frame; 4],
+        // 每页由若干张卡片（带边框的容器）分出层次。
+        card_credentials: nwg::Frame,
+        card_og_key: nwg::Frame,
+        card_cc_key: nwg::Frame,
+        card_query: nwg::Frame,
+        card_proxy: nwg::Frame,
+        card_general: nwg::Frame,
+        card_appearance: nwg::Frame,
+        card_history: nwg::Frame,
+        card_og_quota: nwg::Frame,
+        card_cc_quota: nwg::Frame,
         bold_font: nwg::Font,
         _group_credentials_label: nwg::Label,
-        _credentials_sep: nwg::Frame,
         _group_query_label: nwg::Label,
-        _query_sep: nwg::Frame,
         _group_general_label: nwg::Label,
-        _general_sep: nwg::Frame,
         _group_proxy_label: nwg::Label,
-        _proxy_sep: nwg::Frame,
         _group_appearance_label: nwg::Label,
-        _appearance_sep: nwg::Frame,
         _group_og_label: nwg::Label,
-        _og_sep: nwg::Frame,
         _og_api_key_label: nwg::Label,
         og_api_key_input: nwg::TextInput,
         og_show_api_key: nwg::CheckBox,
@@ -1648,7 +1651,6 @@ mod windows_app {
         og_box: nwg::TextBox,
         refresh_og_button: nwg::Button,
         _group_cc_label: nwg::Label,
-        _cc_sep: nwg::Frame,
         _cc_api_key_label: nwg::Label,
         cc_api_key_input: nwg::TextInput,
         cc_show_api_key: nwg::CheckBox,
@@ -1713,24 +1715,31 @@ mod windows_app {
             let unchecked = nwg::CheckBoxState::Unchecked;
 
             let mut window = Default::default();
-            let mut tabs = Default::default();
-            let mut account_tab = Default::default();
-            let mut general_tab = Default::default();
-            let mut history_tab = Default::default();
-            let mut subscription_tab = Default::default();
+            let mut nav_account = Default::default();
+            let mut nav_general = Default::default();
+            let mut nav_history = Default::default();
+            let mut nav_subscription = Default::default();
+            let mut page_account = Default::default();
+            let mut page_general = Default::default();
+            let mut page_history = Default::default();
+            let mut page_subscription = Default::default();
+            let mut card_credentials = Default::default();
+            let mut card_og_key = Default::default();
+            let mut card_cc_key = Default::default();
+            let mut card_query = Default::default();
+            let mut card_proxy = Default::default();
+            let mut card_general = Default::default();
+            let mut card_appearance = Default::default();
+            let mut card_history = Default::default();
+            let mut card_og_quota = Default::default();
+            let mut card_cc_quota = Default::default();
             let mut bold_font = Default::default();
             let mut group_credentials_label = Default::default();
-            let mut credentials_sep = Default::default();
             let mut group_query_label = Default::default();
-            let mut query_sep = Default::default();
             let mut group_general_label = Default::default();
-            let mut general_sep = Default::default();
             let mut group_proxy_label = Default::default();
-            let mut proxy_sep = Default::default();
             let mut group_appearance_label = Default::default();
-            let mut appearance_sep = Default::default();
             let mut group_og_label = Default::default();
-            let mut og_sep = Default::default();
             let mut og_api_key_label = Default::default();
             let mut og_api_key_input = Default::default();
             let mut og_show_api_key = Default::default();
@@ -1747,7 +1756,6 @@ mod windows_app {
             let mut og_box = Default::default();
             let mut refresh_og_button = Default::default();
             let mut group_cc_label = Default::default();
-            let mut cc_sep = Default::default();
             let mut cc_api_key_label = Default::default();
             let mut cc_api_key_input = Default::default();
             let mut cc_show_api_key = Default::default();
@@ -1804,36 +1812,61 @@ mod windows_app {
 
             nwg::Window::builder()
                 .flags(nwg::WindowFlags::WINDOW | nwg::WindowFlags::VISIBLE)
-                .size((520, 720))
+                .size((760, 680))
                 .center(true)
                 .title(tr(lang, "settings_title"))
                 .build(&mut window)?;
-            nwg::TabsContainer::builder()
-                .position((10, 10))
-                .size((500, 635))
-                .parent(&window)
-                .build(&mut tabs)?;
             nwg::Font::builder()
                 .family(ui_font_family())
                 .size_absolute(12)
                 .weight(700)
                 .build(&mut bold_font)?;
-            nwg::Tab::builder()
+            // 左侧导航：四个页面各一个按钮，当前页的按钮用粗体标出。
+            nwg::Button::builder()
                 .text(tr(lang, "account_tab"))
-                .parent(&tabs)
-                .build(&mut account_tab)?;
-            nwg::Tab::builder()
+                .position((16, 16))
+                .size((140, 40))
+                .parent(&window)
+                .build(&mut nav_account)?;
+            nwg::Button::builder()
                 .text(tr(lang, "settings_tab"))
-                .parent(&tabs)
-                .build(&mut general_tab)?;
-            nwg::Tab::builder()
+                .position((16, 64))
+                .size((140, 40))
+                .parent(&window)
+                .build(&mut nav_general)?;
+            nwg::Button::builder()
                 .text(tr(lang, "history_tab"))
-                .parent(&tabs)
-                .build(&mut history_tab)?;
-            nwg::Tab::builder()
+                .position((16, 112))
+                .size((140, 40))
+                .parent(&window)
+                .build(&mut nav_history)?;
+            nwg::Button::builder()
                 .text(tr(lang, "subscription_tab"))
-                .parent(&tabs)
-                .build(&mut subscription_tab)?;
+                .position((16, 160))
+                .size((140, 40))
+                .parent(&window)
+                .build(&mut nav_subscription)?;
+            // 右侧内容区：四个页面容器叠在同一个位置，一次只显示一个。
+            for (index, frame) in [
+                &mut page_account,
+                &mut page_general,
+                &mut page_history,
+                &mut page_subscription,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                nwg::Frame::builder()
+                    .flags(if index == 0 {
+                        nwg::FrameFlags::VISIBLE
+                    } else {
+                        nwg::FrameFlags::NONE
+                    })
+                    .position((184, 16))
+                    .size((552, 600))
+                    .parent(&window)
+                    .build(frame)?;
+            }
             let og_api_key = read_secure_value(OPENCODE_GO_API_KEY)
                 .ok()
                 .flatten()
@@ -1842,63 +1875,70 @@ mod windows_app {
                 .ok()
                 .flatten()
                 .unwrap_or_default();
-            // ===== 账户页 =====
+            // ===== 账号页：凭据、OpenCode Go、Command Code 三张卡片 =====
+            nwg::Frame::builder()
+                .flags(nwg::FrameFlags::VISIBLE | nwg::FrameFlags::BORDER)
+                .position((0, 0))
+                .size((552, 150))
+                .parent(&page_account)
+                .build(&mut card_credentials)?;
             nwg::Label::builder()
                 .text(tr(lang, "group_credentials"))
-                .position((20, 20))
-                .size((200, 20))
-                .parent(&account_tab)
+                .position((16, 12))
+                .size((520, 20))
+                .parent(&card_credentials)
                 .build(&mut group_credentials_label)?;
             group_credentials_label.set_font(Some(&bold_font));
-            nwg::Frame::builder()
-                .position((20, 44))
-                .size((460, 1))
-                .flags(nwg::FrameFlags::VISIBLE | nwg::FrameFlags::BORDER)
-                .parent(&account_tab)
-                .build(&mut credentials_sep)?;
             nwg::Label::builder()
                 .text(tr(lang, "api_key_label"))
-                .position((20, 62))
-                .size((220, 20))
-                .parent(&account_tab)
+                .position((16, 44))
+                .size((520, 20))
+                .parent(&card_credentials)
                 .build(&mut api_label)?;
             nwg::TextInput::builder()
                 .text(&config.api_key)
                 .placeholder_text(
                     (!config.api_key.trim().is_empty()).then_some(API_KEY_PLACEHOLDER),
                 )
-                .position((20, 86))
-                .size((460, 28))
-                .parent(&account_tab)
+                .position((16, 68))
+                .size((520, 28))
+                .parent(&card_credentials)
                 .focus(true)
                 .build(&mut api_input)?;
             api_input.set_password_char(Some('*'));
             nwg::CheckBox::builder()
                 .text(tr(lang, "show_key"))
-                .position((20, 120))
-                .size((200, 24))
-                .parent(&account_tab)
+                .position((16, 104))
+                .size((260, 24))
+                .parent(&card_credentials)
                 .check_state(unchecked)
                 .build(&mut show_key)?;
+            nwg::Frame::builder()
+                .flags(nwg::FrameFlags::VISIBLE | nwg::FrameFlags::BORDER)
+                .position((0, 162))
+                .size((552, 162))
+                .parent(&page_account)
+                .build(&mut card_og_key)?;
             nwg::Label::builder()
                 .text(tr(lang, "og_api_key_label"))
-                .position((20, 154))
-                .size((220, 20))
-                .parent(&account_tab)
+                .position((16, 12))
+                .size((520, 20))
+                .parent(&card_og_key)
                 .build(&mut og_api_key_label)?;
+            og_api_key_label.set_font(Some(&bold_font));
             nwg::TextInput::builder()
                 .text(&og_api_key)
                 .placeholder_text((!og_api_key.is_empty()).then_some(tr(lang, "og_api_key_hint")))
-                .position((20, 178))
-                .size((460, 28))
-                .parent(&account_tab)
+                .position((16, 42))
+                .size((520, 28))
+                .parent(&card_og_key)
                 .build(&mut og_api_key_input)?;
             og_api_key_input.set_password_char(Some('*'));
             nwg::CheckBox::builder()
                 .text(tr(lang, "og_show_api_key"))
-                .position((20, 212))
-                .size((200, 24))
-                .parent(&account_tab)
+                .position((16, 78))
+                .size((260, 24))
+                .parent(&card_og_key)
                 .check_state(unchecked)
                 .build(&mut og_show_api_key)?;
             nwg::TextBox::builder()
@@ -1909,29 +1949,36 @@ mod windows_app {
                         | nwg::TextBoxFlags::TAB_STOP,
                 )
                 .readonly(true)
-                .position((20, 246))
-                .size((460, 40))
-                .parent(&account_tab)
+                .position((16, 110))
+                .size((520, 40))
+                .parent(&card_og_key)
                 .build(&mut og_hint_box)?;
+            nwg::Frame::builder()
+                .flags(nwg::FrameFlags::VISIBLE | nwg::FrameFlags::BORDER)
+                .position((0, 336))
+                .size((552, 166))
+                .parent(&page_account)
+                .build(&mut card_cc_key)?;
             nwg::Label::builder()
                 .text(tr(lang, "cc_api_key_label"))
-                .position((20, 296))
-                .size((220, 20))
-                .parent(&account_tab)
+                .position((16, 12))
+                .size((520, 20))
+                .parent(&card_cc_key)
                 .build(&mut cc_api_key_label)?;
+            cc_api_key_label.set_font(Some(&bold_font));
             nwg::TextInput::builder()
                 .text(&cc_api_key)
                 .placeholder_text((!cc_api_key.is_empty()).then_some(tr(lang, "cc_api_key_hint")))
-                .position((20, 320))
-                .size((460, 28))
-                .parent(&account_tab)
+                .position((16, 42))
+                .size((520, 28))
+                .parent(&card_cc_key)
                 .build(&mut cc_api_key_input)?;
             cc_api_key_input.set_password_char(Some('*'));
             nwg::CheckBox::builder()
                 .text(tr(lang, "cc_show_api_key"))
-                .position((20, 354))
-                .size((200, 24))
-                .parent(&account_tab)
+                .position((16, 78))
+                .size((260, 24))
+                .parent(&card_cc_key)
                 .check_state(unchecked)
                 .build(&mut cc_show_api_key)?;
             nwg::TextBox::builder()
@@ -1942,54 +1989,54 @@ mod windows_app {
                         | nwg::TextBoxFlags::TAB_STOP,
                 )
                 .readonly(true)
-                .position((20, 384))
-                .size((460, 48))
-                .parent(&account_tab)
+                .position((16, 110))
+                .size((520, 44))
+                .parent(&card_cc_key)
                 .build(&mut cc_hint_box)?;
 
-            // ===== 常规页：查询组 =====
+            // ===== 常规页：两列卡片（左：查询、代理；右：通用、图标外观）=====
+            nwg::Frame::builder()
+                .flags(nwg::FrameFlags::VISIBLE | nwg::FrameFlags::BORDER)
+                .position((0, 0))
+                .size((268, 262))
+                .parent(&page_general)
+                .build(&mut card_query)?;
             nwg::Label::builder()
                 .text(tr(lang, "group_query"))
-                .position((20, 20))
-                .size((200, 20))
-                .parent(&general_tab)
+                .position((14, 12))
+                .size((240, 20))
+                .parent(&card_query)
                 .build(&mut group_query_label)?;
             group_query_label.set_font(Some(&bold_font));
-            nwg::Frame::builder()
-                .position((20, 44))
-                .size((460, 1))
-                .flags(nwg::FrameFlags::VISIBLE | nwg::FrameFlags::BORDER)
-                .parent(&general_tab)
-                .build(&mut query_sep)?;
             nwg::Label::builder()
                 .text(tr(lang, "interval_label"))
-                .position((20, 60))
-                .size((220, 20))
-                .parent(&general_tab)
+                .position((14, 44))
+                .size((240, 18))
+                .parent(&card_query)
                 .build(&mut interval_label)?;
             nwg::TextInput::builder()
                 .text(&config.interval_minutes.to_string())
-                .position((250, 56))
-                .size((230, 28))
-                .parent(&general_tab)
+                .position((14, 66))
+                .size((240, 26))
+                .parent(&card_query)
                 .build(&mut interval_input)?;
             nwg::Label::builder()
                 .text(tr(lang, "threshold_label"))
-                .position((20, 90))
-                .size((220, 20))
-                .parent(&general_tab)
+                .position((14, 102))
+                .size((240, 18))
+                .parent(&card_query)
                 .build(&mut threshold_label)?;
             nwg::TextInput::builder()
                 .text(&format!("{:.2}", config.threshold_yuan))
-                .position((250, 86))
-                .size((230, 28))
-                .parent(&general_tab)
+                .position((14, 124))
+                .size((240, 26))
+                .parent(&card_query)
                 .build(&mut threshold_input)?;
             nwg::Label::builder()
                 .text(tr(lang, "alert_mode_label"))
-                .position((20, 120))
-                .size((220, 20))
-                .parent(&general_tab)
+                .position((14, 160))
+                .size((240, 18))
+                .parent(&card_query)
                 .build(&mut alert_mode_label)?;
             nwg::ComboBox::builder()
                 .collection(vec![
@@ -2002,15 +2049,15 @@ mod windows_app {
                     "never" => 2,
                     _ => 0,
                 }))
-                .position((250, 116))
-                .size((230, 100))
-                .parent(&general_tab)
+                .position((14, 182))
+                .size((240, 100))
+                .parent(&card_query)
                 .build(&mut alert_mode_combo)?;
             nwg::CheckBox::builder()
                 .text(tr(lang, "api_alert_label"))
-                .position((20, 150))
-                .size((260, 24))
-                .parent(&general_tab)
+                .position((14, 224))
+                .size((240, 24))
+                .parent(&card_query)
                 .check_state(if config.api_alert_enabled {
                     checked
                 } else {
@@ -2018,38 +2065,37 @@ mod windows_app {
                 })
                 .build(&mut api_alerts)?;
 
-            // ===== 常规页：通用组 =====
+            nwg::Frame::builder()
+                .flags(nwg::FrameFlags::VISIBLE | nwg::FrameFlags::BORDER)
+                .position((284, 0))
+                .size((268, 260))
+                .parent(&page_general)
+                .build(&mut card_general)?;
             nwg::Label::builder()
                 .text(tr(lang, "group_general"))
-                .position((20, 180))
-                .size((200, 20))
-                .parent(&general_tab)
+                .position((14, 12))
+                .size((240, 20))
+                .parent(&card_general)
                 .build(&mut group_general_label)?;
             group_general_label.set_font(Some(&bold_font));
-            nwg::Frame::builder()
-                .position((20, 204))
-                .size((460, 1))
-                .flags(nwg::FrameFlags::VISIBLE | nwg::FrameFlags::BORDER)
-                .parent(&general_tab)
-                .build(&mut general_sep)?;
             nwg::Label::builder()
                 .text(tr(lang, "language_label"))
-                .position((20, 220))
-                .size((220, 20))
-                .parent(&general_tab)
+                .position((14, 44))
+                .size((240, 18))
+                .parent(&card_general)
                 .build(&mut language_label)?;
             nwg::ComboBox::builder()
                 .collection(vec!["中文", "English"])
                 .selected_index(Some(if config.ui_language == "en" { 1 } else { 0 }))
-                .position((250, 216))
-                .size((230, 100))
-                .parent(&general_tab)
+                .position((14, 66))
+                .size((240, 100))
+                .parent(&card_general)
                 .build(&mut language_combo)?;
             nwg::CheckBox::builder()
                 .text(tr(lang, "auto_start"))
-                .position((20, 250))
-                .size((220, 24))
-                .parent(&general_tab)
+                .position((14, 108))
+                .size((240, 24))
+                .parent(&card_general)
                 .check_state(if config.auto_start {
                     checked
                 } else {
@@ -2058,49 +2104,48 @@ mod windows_app {
                 .build(&mut auto_start)?;
             nwg::Label::builder()
                 .text(tr(lang, "retention_label"))
-                .position((20, 280))
-                .size((220, 20))
-                .parent(&general_tab)
+                .position((14, 140))
+                .size((240, 18))
+                .parent(&card_general)
                 .build(&mut retention_label)?;
             nwg::TextInput::builder()
                 .text(&config.retention_days.to_string())
-                .position((250, 276))
-                .size((230, 28))
-                .parent(&general_tab)
+                .position((14, 162))
+                .size((240, 26))
+                .parent(&card_general)
                 .build(&mut retention_input)?;
             nwg::Label::builder()
                 .text(tr(lang, "export_path_label"))
-                .position((20, 310))
-                .size((220, 20))
-                .parent(&general_tab)
+                .position((14, 198))
+                .size((240, 18))
+                .parent(&card_general)
                 .build(&mut export_path_label)?;
             nwg::TextInput::builder()
                 .text(&config.export_path)
                 .placeholder_text(Some("%USERPROFILE%"))
-                .position((250, 306))
-                .size((230, 28))
-                .parent(&general_tab)
+                .position((14, 220))
+                .size((240, 26))
+                .parent(&card_general)
                 .build(&mut export_path_input)?;
 
-            // ===== 常规页：代理组 =====
+            nwg::Frame::builder()
+                .flags(nwg::FrameFlags::VISIBLE | nwg::FrameFlags::BORDER)
+                .position((0, 274))
+                .size((268, 138))
+                .parent(&page_general)
+                .build(&mut card_proxy)?;
             nwg::Label::builder()
                 .text(tr(lang, "group_proxy"))
-                .position((20, 340))
-                .size((200, 20))
-                .parent(&general_tab)
+                .position((14, 12))
+                .size((240, 20))
+                .parent(&card_proxy)
                 .build(&mut group_proxy_label)?;
             group_proxy_label.set_font(Some(&bold_font));
-            nwg::Frame::builder()
-                .position((20, 364))
-                .size((460, 1))
-                .flags(nwg::FrameFlags::VISIBLE | nwg::FrameFlags::BORDER)
-                .parent(&general_tab)
-                .build(&mut proxy_sep)?;
             nwg::CheckBox::builder()
                 .text(tr(lang, "proxy_enable"))
-                .position((20, 380))
-                .size((260, 24))
-                .parent(&general_tab)
+                .position((14, 44))
+                .size((240, 24))
+                .parent(&card_proxy)
                 .check_state(if config.proxy_enabled {
                     checked
                 } else {
@@ -2109,37 +2154,36 @@ mod windows_app {
                 .build(&mut proxy_enabled)?;
             nwg::Label::builder()
                 .text(tr(lang, "proxy_label"))
-                .position((20, 410))
-                .size((220, 20))
-                .parent(&general_tab)
+                .position((14, 76))
+                .size((240, 18))
+                .parent(&card_proxy)
                 .build(&mut proxy_label)?;
             nwg::TextInput::builder()
                 .text(&config.http_proxy)
                 .placeholder_text(Some(tr(lang, "proxy_placeholder")))
-                .position((250, 406))
-                .size((230, 28))
-                .parent(&general_tab)
+                .position((14, 98))
+                .size((240, 26))
+                .parent(&card_proxy)
                 .build(&mut proxy_input)?;
 
-            // ===== 常规页：图标外观组 =====
+            nwg::Frame::builder()
+                .flags(nwg::FrameFlags::VISIBLE | nwg::FrameFlags::BORDER)
+                .position((284, 272))
+                .size((268, 236))
+                .parent(&page_general)
+                .build(&mut card_appearance)?;
             nwg::Label::builder()
                 .text(tr(lang, "group_appearance"))
-                .position((20, 446))
-                .size((200, 20))
-                .parent(&general_tab)
+                .position((14, 12))
+                .size((240, 20))
+                .parent(&card_appearance)
                 .build(&mut group_appearance_label)?;
             group_appearance_label.set_font(Some(&bold_font));
-            nwg::Frame::builder()
-                .position((20, 470))
-                .size((460, 1))
-                .flags(nwg::FrameFlags::VISIBLE | nwg::FrameFlags::BORDER)
-                .parent(&general_tab)
-                .build(&mut appearance_sep)?;
             nwg::Label::builder()
                 .text(tr(lang, "theme_label"))
-                .position((20, 486))
-                .size((220, 20))
-                .parent(&general_tab)
+                .position((14, 44))
+                .size((240, 18))
+                .parent(&card_appearance)
                 .build(&mut theme_label)?;
             nwg::ComboBox::builder()
                 .collection(vec![
@@ -2158,15 +2202,15 @@ mod windows_app {
                     "custom" => 5,
                     _ => 0,
                 }))
-                .position((250, 482))
-                .size((230, 100))
-                .parent(&general_tab)
+                .position((14, 66))
+                .size((240, 100))
+                .parent(&card_appearance)
                 .build(&mut theme_combo)?;
             nwg::CheckBox::builder()
                 .text(tr(lang, "icon_stroke_label"))
-                .position((20, 516))
-                .size((220, 24))
-                .parent(&general_tab)
+                .position((14, 108))
+                .size((240, 24))
+                .parent(&card_appearance)
                 .check_state(if config.icon_stroke {
                     checked
                 } else {
@@ -2175,22 +2219,22 @@ mod windows_app {
                 .build(&mut icon_stroke)?;
             nwg::Label::builder()
                 .text(tr(lang, "custom_colors_label"))
-                .position((20, 546))
-                .size((220, 20))
-                .parent(&general_tab)
+                .position((14, 140))
+                .size((240, 18))
+                .parent(&card_appearance)
                 .build(&mut custom_color_label)?;
             let colors = custom_or_default_colors(&config);
             nwg::TextInput::builder()
                 .text(colors.get("ok").map(String::as_str).unwrap_or("3c6966"))
-                .position((20, 570))
-                .size((100, 28))
-                .parent(&general_tab)
+                .position((14, 162))
+                .size((114, 26))
+                .parent(&card_appearance)
                 .build(&mut ok_color_input)?;
             nwg::TextInput::builder()
                 .text(colors.get("low").map(String::as_str).unwrap_or("b9463c"))
-                .position((135, 570))
-                .size((100, 28))
-                .parent(&general_tab)
+                .position((140, 162))
+                .size((114, 26))
+                .parent(&card_appearance)
                 .build(&mut low_color_input)?;
             nwg::TextInput::builder()
                 .text(
@@ -2199,60 +2243,66 @@ mod windows_app {
                         .map(String::as_str)
                         .unwrap_or("78695a"),
                 )
-                .position((250, 570))
-                .size((100, 28))
-                .parent(&general_tab)
+                .position((14, 196))
+                .size((114, 26))
+                .parent(&card_appearance)
                 .build(&mut degraded_color_input)?;
             nwg::TextInput::builder()
                 .text(colors.get("nodata").map(String::as_str).unwrap_or("69696e"))
-                .position((365, 570))
-                .size((100, 28))
-                .parent(&general_tab)
+                .position((140, 196))
+                .size((114, 26))
+                .parent(&card_appearance)
                 .build(&mut nodata_color_input)?;
 
             nwg::Label::builder()
                 .text("")
-                .position((20, 604))
+                .position((0, 0))
                 .size((0, 0))
-                .parent(&general_tab)
+                .parent(&page_general)
                 .build(&mut status_label)?;
             let history_text =
                 format_history_view(lang, config.retention_days, None, config.interval_minutes);
+            nwg::Frame::builder()
+                .flags(nwg::FrameFlags::VISIBLE | nwg::FrameFlags::BORDER)
+                .position((0, 0))
+                .size((552, 580))
+                .parent(&page_history)
+                .build(&mut card_history)?;
             nwg::Label::builder()
                 .text(tr(lang, "history_days"))
-                .position((20, 20))
+                .position((14, 14))
                 .size((45, 22))
-                .parent(&history_tab)
+                .parent(&card_history)
                 .build(&mut history_days_label)?;
             nwg::TextInput::builder()
                 .text(&config.retention_days.to_string())
-                .position((70, 16))
-                .size((55, 28))
-                .parent(&history_tab)
+                .position((64, 10))
+                .size((60, 28))
+                .parent(&card_history)
                 .build(&mut history_days_input)?;
             nwg::Label::builder()
                 .text(tr(lang, "history_currency_filter"))
-                .position((140, 20))
-                .size((60, 22))
-                .parent(&history_tab)
+                .position((134, 14))
+                .size((70, 22))
+                .parent(&card_history)
                 .build(&mut history_currency_label)?;
             nwg::TextInput::builder()
                 .text("all")
-                .position((205, 16))
-                .size((70, 28))
-                .parent(&history_tab)
+                .position((208, 10))
+                .size((80, 28))
+                .parent(&card_history)
                 .build(&mut history_currency_input)?;
             nwg::Button::builder()
                 .text(tr(lang, "refresh"))
-                .position((290, 16))
+                .position((300, 10))
                 .size((86, 30))
-                .parent(&history_tab)
+                .parent(&card_history)
                 .build(&mut refresh_history_button)?;
             nwg::Button::builder()
                 .text(tr(lang, "export"))
-                .position((385, 16))
+                .position((396, 10))
                 .size((86, 30))
-                .parent(&history_tab)
+                .parent(&card_history)
                 .build(&mut export_history_button)?;
             nwg::TextBox::builder()
                 .text(&history_text)
@@ -2265,9 +2315,9 @@ mod windows_app {
                         | nwg::TextBoxFlags::TAB_STOP,
                 )
                 .readonly(true)
-                .position((20, 58))
-                .size((455, 330))
-                .parent(&history_tab)
+                .position((14, 54))
+                .size((524, 510))
+                .parent(&card_history)
                 .build(&mut history_box)?;
             let og_box_text = if read_secure_value(OPENCODE_GO_API_KEY)
                 .ok()
@@ -2289,82 +2339,82 @@ mod windows_app {
             } else {
                 String::new()
             };
-            // ===== 订阅页：OpenCode Go 组 =====
+            // ===== 订阅页：OpenCode Go 与 Command Code 两张卡片 =====
+            nwg::Frame::builder()
+                .flags(nwg::FrameFlags::VISIBLE | nwg::FrameFlags::BORDER)
+                .position((0, 0))
+                .size((552, 270))
+                .parent(&page_subscription)
+                .build(&mut card_og_quota)?;
             nwg::Label::builder()
                 .text(tr(lang, "group_og"))
-                .position((20, 17))
-                .size((200, 20))
-                .parent(&subscription_tab)
+                .position((14, 12))
+                .size((300, 20))
+                .parent(&card_og_quota)
                 .build(&mut group_og_label)?;
             group_og_label.set_font(Some(&bold_font));
-            nwg::Frame::builder()
-                .position((20, 41))
-                .size((460, 1))
-                .flags(nwg::FrameFlags::VISIBLE | nwg::FrameFlags::BORDER)
-                .parent(&subscription_tab)
-                .build(&mut og_sep)?;
             nwg::Button::builder()
                 .text(tr(lang, "og_refresh"))
-                .position((20, 52))
+                .position((14, 44))
                 .size((86, 30))
-                .parent(&subscription_tab)
+                .parent(&card_og_quota)
                 .build(&mut refresh_og_button)?;
             nwg::Label::builder()
                 .text(tr(lang, "og_window_5h"))
-                .position((20, 92))
+                .position((14, 86))
                 .size((70, 22))
-                .parent(&subscription_tab)
+                .parent(&card_og_quota)
                 .build(&mut og_rolling_label)?;
             nwg::ProgressBar::builder()
-                .position((95, 90))
-                .size((270, 14))
+                .position((92, 88))
+                .size((348, 14))
                 .range(0..100)
                 .pos(0)
-                .parent(&subscription_tab)
+                .parent(&card_og_quota)
                 .build(&mut og_rolling_bar)?;
             nwg::Label::builder()
                 .text("--")
-                .position((370, 92))
+                .position((448, 86))
                 .size((90, 22))
-                .parent(&subscription_tab)
+                .parent(&card_og_quota)
                 .build(&mut og_rolling_value)?;
             nwg::Label::builder()
                 .text(tr(lang, "og_window_weekly"))
-                .position((20, 130))
+                .position((14, 124))
                 .size((70, 22))
-                .parent(&subscription_tab)
+                .parent(&card_og_quota)
                 .build(&mut og_weekly_label)?;
             nwg::ProgressBar::builder()
-                .position((95, 128))
-                .size((270, 14))
+                .position((92, 126))
+                .size((348, 14))
                 .range(0..100)
                 .pos(0)
-                .parent(&subscription_tab)
+                .parent(&card_og_quota)
                 .build(&mut og_weekly_bar)?;
             nwg::Label::builder()
                 .text("--")
-                .position((370, 130))
+                .position((448, 124))
                 .size((90, 22))
-                .parent(&subscription_tab)
+                .parent(&card_og_quota)
                 .build(&mut og_weekly_value)?;
             nwg::Label::builder()
                 .text(tr(lang, "og_window_monthly"))
-                .position((20, 168))
+                .position((14, 162))
                 .size((70, 22))
-                .parent(&subscription_tab)
+                .parent(&card_og_quota)
                 .build(&mut og_monthly_label)?;
             nwg::ProgressBar::builder()
-                .position((95, 166))
-                .size((270, 14))
+                .position((92, 164))
+                .size((348, 14))
                 .range(0..100)
                 .pos(0)
-                .parent(&subscription_tab)
+                .parent(&card_og_quota)
                 .build(&mut og_monthly_bar)?;
             nwg::Label::builder()
                 .text("--")
-                .position((370, 168))
+                .position((448, 162))
                 .size((90, 22))
-                .parent(&subscription_tab)
+                .parent(&card_og_quota)
                 .build(&mut og_monthly_value)?;
             nwg::TextBox::builder()
                 .text(&og_box_text)
@@ -2375,86 +2425,85 @@ mod windows_app {
                         | nwg::TextBoxFlags::TAB_STOP,
                 )
                 .readonly(true)
-                .position((20, 200))
-                .size((440, 62))
-                .parent(&subscription_tab)
+                .position((14, 192))
+                .size((524, 64))
+                .parent(&card_og_quota)
                 .build(&mut og_box)?;
-            // ===== 订阅页：Command Code 组 =====
+            nwg::Frame::builder()
+                .flags(nwg::FrameFlags::VISIBLE | nwg::FrameFlags::BORDER)
+                .position((0, 282))
+                .size((552, 270))
+                .parent(&page_subscription)
+                .build(&mut card_cc_quota)?;
             nwg::Label::builder()
                 .text(tr(lang, "group_cc"))
-                .position((20, 272))
-                .size((200, 20))
-                .parent(&subscription_tab)
+                .position((14, 12))
+                .size((300, 20))
+                .parent(&card_cc_quota)
                 .build(&mut group_cc_label)?;
             group_cc_label.set_font(Some(&bold_font));
-            nwg::Frame::builder()
-                .position((20, 296))
-                .size((460, 1))
-                .flags(nwg::FrameFlags::VISIBLE | nwg::FrameFlags::BORDER)
-                .parent(&subscription_tab)
-                .build(&mut cc_sep)?;
             nwg::Button::builder()
                 .text(tr(lang, "cc_refresh"))
-                .position((20, 307))
+                .position((14, 44))
                 .size((86, 30))
-                .parent(&subscription_tab)
+                .parent(&card_cc_quota)
                 .build(&mut refresh_cc_button)?;
             nwg::Label::builder()
                 .text(tr(lang, "cc_window_5h"))
-                .position((20, 347))
+                .position((14, 86))
                 .size((70, 22))
-                .parent(&subscription_tab)
+                .parent(&card_cc_quota)
                 .build(&mut cc_5h_label)?;
             nwg::ProgressBar::builder()
-                .position((95, 345))
-                .size((270, 14))
+                .position((92, 88))
+                .size((348, 14))
                 .range(0..100)
                 .pos(0)
-                .parent(&subscription_tab)
+                .parent(&card_cc_quota)
                 .build(&mut cc_5h_bar)?;
             nwg::Label::builder()
                 .text("--")
-                .position((370, 347))
+                .position((448, 86))
                 .size((90, 22))
-                .parent(&subscription_tab)
+                .parent(&card_cc_quota)
                 .build(&mut cc_5h_value)?;
             nwg::Label::builder()
                 .text(tr(lang, "cc_window_weekly"))
-                .position((20, 385))
+                .position((14, 124))
                 .size((70, 22))
-                .parent(&subscription_tab)
+                .parent(&card_cc_quota)
                 .build(&mut cc_weekly_label)?;
             nwg::ProgressBar::builder()
-                .position((95, 383))
-                .size((270, 14))
+                .position((92, 126))
+                .size((348, 14))
                 .range(0..100)
                 .pos(0)
-                .parent(&subscription_tab)
+                .parent(&card_cc_quota)
                 .build(&mut cc_weekly_bar)?;
             nwg::Label::builder()
                 .text("--")
-                .position((370, 385))
+                .position((448, 124))
                 .size((90, 22))
-                .parent(&subscription_tab)
+                .parent(&card_cc_quota)
                 .build(&mut cc_weekly_value)?;
             nwg::Label::builder()
                 .text(tr(lang, "cc_window_monthly"))
-                .position((20, 423))
+                .position((14, 162))
                 .size((70, 22))
-                .parent(&subscription_tab)
+                .parent(&card_cc_quota)
                 .build(&mut cc_monthly_label)?;
             nwg::ProgressBar::builder()
-                .position((95, 421))
-                .size((270, 14))
+                .position((92, 164))
+                .size((348, 14))
                 .range(0..100)
                 .pos(0)
-                .parent(&subscription_tab)
+                .parent(&card_cc_quota)
                 .build(&mut cc_monthly_bar)?;
             nwg::Label::builder()
                 .text("--")
-                .position((370, 423))
+                .position((448, 162))
                 .size((90, 22))
-                .parent(&subscription_tab)
+                .parent(&card_cc_quota)
                 .build(&mut cc_monthly_value)?;
             nwg::TextBox::builder()
                 .text(&cc_box_text)
@@ -2465,19 +2514,19 @@ mod windows_app {
                         | nwg::TextBoxFlags::TAB_STOP,
                 )
                 .readonly(true)
-                .position((20, 455))
-                .size((440, 62))
-                .parent(&subscription_tab)
+                .position((14, 192))
+                .size((524, 64))
+                .parent(&card_cc_quota)
                 .build(&mut cc_box)?;
             nwg::Button::builder()
                 .text(tr(lang, "save"))
-                .position((300, 660))
+                .position((558, 632))
                 .size((86, 30))
                 .parent(&window)
                 .build(&mut save_button)?;
             nwg::Button::builder()
                 .text(tr(lang, "cancel"))
-                .position((395, 660))
+                .position((654, 632))
                 .size((86, 30))
                 .parent(&window)
                 .build(&mut cancel_button)?;
@@ -2485,24 +2534,25 @@ mod windows_app {
             let settings = Rc::new(Self {
                 base_config: config.clone(),
                 window,
-                _tabs: tabs,
-                _account_tab: account_tab,
-                _general_tab: general_tab,
-                _history_tab: history_tab,
-                _subscription_tab: subscription_tab,
+                nav_buttons: [nav_account, nav_general, nav_history, nav_subscription],
+                page_frames: [page_account, page_general, page_history, page_subscription],
+                card_credentials,
+                card_og_key,
+                card_cc_key,
+                card_query,
+                card_proxy,
+                card_general,
+                card_appearance,
+                card_history,
+                card_og_quota,
+                card_cc_quota,
                 bold_font,
                 _group_credentials_label: group_credentials_label,
-                _credentials_sep: credentials_sep,
                 _group_query_label: group_query_label,
-                _query_sep: query_sep,
                 _group_general_label: group_general_label,
-                _general_sep: general_sep,
                 _group_proxy_label: group_proxy_label,
-                _proxy_sep: proxy_sep,
                 _group_appearance_label: group_appearance_label,
-                _appearance_sep: appearance_sep,
                 _group_og_label: group_og_label,
-                _og_sep: og_sep,
                 _og_api_key_label: og_api_key_label,
                 og_api_key_input,
                 og_show_api_key,
@@ -2519,7 +2569,6 @@ mod windows_app {
                 og_box,
                 refresh_og_button,
                 _group_cc_label: group_cc_label,
-                _cc_sep: cc_sep,
                 _cc_api_key_label: cc_api_key_label,
                 cc_api_key_input,
                 cc_show_api_key,
@@ -2575,6 +2624,8 @@ mod windows_app {
                 cancel_button,
                 handler: RefCell::new(None),
             });
+            // 打开时停在第一页：只有账号页的容器可见，导航里也只有它加粗。
+            settings.show_page(0);
 
             let weak_settings = Rc::downgrade(&settings);
             let weak_app = Rc::downgrade(&app);
@@ -2592,6 +2643,11 @@ mod windows_app {
                         }
                         nwg::Event::OnButtonClick if &handle == &settings.cancel_button => {
                             app.settings_closed()
+                        }
+                        nwg::Event::OnButtonClick
+                            if settings.nav_buttons.iter().any(|button| &handle == button) =>
+                        {
+                            settings.select_page(&handle);
                         }
                         nwg::Event::OnButtonClick if &handle == &settings.show_key => {
                             if settings.show_key.check_state() == nwg::CheckBoxState::Checked {
@@ -2651,6 +2707,31 @@ mod windows_app {
                 });
             settings.handler.borrow_mut().replace(handler);
             Ok(settings)
+        }
+
+        /// 导航按钮被点击：切到它对应的那一页。
+        fn select_page(&self, handle: &nwg::ControlHandle) {
+            let index = self
+                .nav_buttons
+                .iter()
+                .position(|button| handle == button)
+                .unwrap_or(0);
+            self.show_page(index);
+        }
+
+        /// 页码 0..3 依次是账号、常规、历史、订阅。只显示当前页的容器，
+        /// 导航栏里也只把当前按钮设为粗体。
+        fn show_page(&self, page: usize) {
+            for (index, frame) in self.page_frames.iter().enumerate() {
+                frame.set_visible(index == page);
+            }
+            for (index, button) in self.nav_buttons.iter().enumerate() {
+                button.set_font(if index == page {
+                    Some(&self.bold_font)
+                } else {
+                    None
+                });
+            }
         }
 
         fn refresh_opencode_go(&self) {

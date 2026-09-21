@@ -276,7 +276,7 @@ Linux `dsmon` stores settings in `~/.config/deepseek-balance-monitor/config.json
 
 Windows logs are written to `%APPDATA%\DeepSeek Balance Monitor\app.log`.
 
-Rust Windows and Rust Linux store encrypted settings and balance history in `balance_history.db` next to their app data. History uses the same `retention_days` setting as log cleanup. The Windows settings dialog and Plasma widget settings include a History tab with days/currency filters, trend summary, chart, and CSV export. Linux CLI output stays English-only and `dsmon history` prints text statistics instead of raw rows.
+Rust Windows and Rust Linux store encrypted settings and balance history in `balance_history.db` next to their app data. History uses the same `retention_days` setting as log cleanup. The Windows settings dialog and Plasma widget settings include a History page with days/currency filters, trend summary, chart, and CSV export. Linux CLI output stays English-only and `dsmon history` prints text statistics instead of raw rows.
 
 ## Tray Menu
 

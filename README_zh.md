@@ -277,7 +277,7 @@ Linux `dsmon` 配置路径：`~/.config/deepseek-balance-monitor/config.json`，
 
 Windows 日志路径：`%APPDATA%\DeepSeek Balance Monitor\app.log`
 
-Rust Windows 和 Rust Linux 会在各自应用数据目录保存加密设置和 `balance_history.db`。历史记录使用与日志清理相同的 `retention_days` 保留天数。Windows 设置窗口和 Plasma 小组件设置页提供“历史”选项卡，支持天数 / 币种筛选、趋势统计、图表和 CSV 导出。Linux CLI 固定英文输出，`dsmon history` 显示文字统计，不直接展示原始行。
+Rust Windows 和 Rust Linux 会在各自应用数据目录保存加密设置和 `balance_history.db`。历史记录使用与日志清理相同的 `retention_days` 保留天数。Windows 设置窗口和 Plasma 小组件设置页提供“历史”页，支持天数 / 币种筛选、趋势统计、图表和 CSV 导出。Linux CLI 固定英文输出，`dsmon history` 显示文字统计，不直接展示原始行。
 
 ## 托盘菜单
 

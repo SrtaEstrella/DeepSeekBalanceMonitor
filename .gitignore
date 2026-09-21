@@ -1,6 +1,9 @@
 build/
 dist/
-docs/
+# `docs/` used to be ignored here, which silently swallowed every document put
+# in it. The interface contract for a Python build lives there now, so the
+# directory is tracked. (The `rust-gui` branch has the same line removed for the
+# same reason.)
 __pycache__/
 *.pyc
 *.pyo

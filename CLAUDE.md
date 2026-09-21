@@ -122,7 +122,7 @@ dsmon opencode-go set-key <api_key>   # 加密保存 API Key
 
 - 调用官方 API `GET https://opencode.ai/zen/go/v1/usage`（请求头 `Authorization: Bearer <api_key>`），返回 **5h 滚动 / 每周 / 每月** 三档用量的已用百分比（`percent`）与重置时间戳（`resetsAt`，ISO 8601，转换为剩余秒数展示）
 - 凭据为单个 API Key（`sk-xxxxx`，从 https://opencode.ai/auth 获取），**加密存入 `secure_settings` 表**（独立 key `opencode_go_api_key`，与 DeepSeek API Key 同一加密机制），**不写入 config.json**
-- 入口：rust-windows 设置窗口第三个「Opencode Go」标签页与 Plasma 小组件「OpenCode Go」设置页（均可配置 API Key + 手动刷新）；rust-linux 为 `dsmon opencode-go` / `dsmon opencode-go set-key [<api_key>]`（无参数时从 stdin 读取，与 `dsmon set-key` 一致）/ `dsmon opencode-go json`
+- 入口：rust-windows 设置窗口的「订阅」页（左侧导航依次是账号 / 常规 / 历史 / 订阅，订阅页含 OpenCode Go 与 Command Code 两组）与 Plasma 小组件「OpenCode Go」设置页（均可配置 API Key + 手动刷新）；rust-linux 为 `dsmon opencode-go` / `dsmon opencode-go set-key [<api_key>]`（无参数时从 stdin 读取，与 `dsmon set-key` 一致）/ `dsmon opencode-go json`
 - 显示：三档进度条按用量分级变色（<60% 绿 / 60–79% 琥珀 / ≥80% 红），两平台外观一致
 
 ### API 端点与代理

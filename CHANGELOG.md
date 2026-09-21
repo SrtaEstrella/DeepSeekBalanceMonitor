@@ -2,6 +2,16 @@
 
 All notable changes to DeepSeek Balance Monitor are documented here.
 
+## Rust v1.5.0 (2026-09-16)
+
+### Changed
+
+- Windows settings window reworked: the four tabs (Account / General / History / Subscriptions) are now a left-hand navigation beside card pages. Four buttons pick the page and the current one is bold; each page groups its controls into bordered cards (Account: credentials, OpenCode Go, Command Code — each card title is the platform's key label; General: query and proxy cards in the left column, general and icon-appearance cards in the right). The controls, the settings they read and write, and the save/cancel behaviour are unchanged; the window is 760×680 instead of 520×720 to fit the navigation column.
+
+### Note
+
+- The Linux build carries no changes in this release; its version follows the shared `rust-v*` tag so the release holds both packages under one number.
+
 ## Rust v1.4.3 (2026-09-12)
 
 ### Fixed
