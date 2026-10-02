@@ -513,11 +513,13 @@ def get_history_by_date(date_str: str, api_id: str | None = None):
 
 
 def _resolve_export_path(path: str) -> str:
-    """Expand `~` and %VARS% so a path like %USERPROFILE%\\balance.csv works.
+    """Expand `~` and environment variables before opening an export path.
 
-    The settings field hints at environment variables, but the literal string
-    used to be opened as-is — creating a directory actually named
-    "%USERPROFILE%" (the Rust builds fixed the same thing).
+    Which variable syntax is expanded follows the platform, because that is what
+    `os.path.expandvars` provides: `%VAR%` on Windows (so a pasted
+    `%USERPROFILE%\\balance.csv` works there) and `$VAR` elsewhere. Previously the
+    literal string was opened as-is, which created a directory actually named
+    "%USERPROFILE%" on Windows — the Rust builds fixed the same thing.
     """
     return os.path.expandvars(os.path.expanduser(path or ""))
 

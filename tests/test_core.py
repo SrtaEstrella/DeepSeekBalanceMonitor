@@ -518,13 +518,24 @@ class RustParityTests(unittest.TestCase):
         self.assertFalse(paths_mod.acquire_single_instance(),
                          "a held mutex must turn the second instance away")
 
-    # ── Export path expansion (%USERPROFILE% / ~) ────────────────────────────
+    # ── Export path expansion (~ plus the platform's variable syntax) ────────
     def test_export_path_expands_variables_and_home(self):
+        import os as _os
         from src.core.storage import _resolve_export_path
-        expanded = _resolve_export_path("%USERPROFILE%/balance.csv")
-        self.assertNotIn("%USERPROFILE%", expanded)
-        self.assertTrue(expanded.endswith("balance.csv"))
-        self.assertNotIn("~", _resolve_export_path("~/balance.csv"))
+        # `~` expands wherever a home directory is resolvable
+        if _os.path.expanduser("~") != "~":
+            self.assertNotIn("~", _resolve_export_path("~/balance.csv"))
+        self.assertTrue(_resolve_export_path("~/balance.csv").endswith("balance.csv"))
+        if _os.name == "nt":
+            # ntpath.expandvars handles the %VAR% form a Windows user may paste
+            expanded = _resolve_export_path("%USERPROFILE%/balance.csv")
+            self.assertNotIn("%USERPROFILE%", expanded)
+            self.assertTrue(expanded.endswith("balance.csv"))
+        else:
+            # posixpath.expandvars handles $VAR (it deliberately leaves %VAR% alone)
+            _os.environ["DSH_EXPORT_TEST"] = "expanded"
+            self.addCleanup(lambda: _os.environ.pop("DSH_EXPORT_TEST", None))
+            self.assertIn("expanded", _resolve_export_path("$DSH_EXPORT_TEST/balance.csv"))
 
     # ── Quota percentages clamped to 0–100 (shared contract §7.3) ───────────
     def test_opencode_percentage_is_clamped(self):
