@@ -104,6 +104,7 @@ def fetch_glm_quota(api_key: str, platform_key: str = "glm_coding_cn",
             pct = float(x.get("percentage") or 0)
         except (TypeError, ValueError):
             pct = 0.0
+        pct = max(0.0, min(100.0, pct))   # shared contract §7.3: clamp to [0, 100]
         remaining = max(0.0, min(100.0, 100.0 - pct))
         return {
             "usage_percent": pct,

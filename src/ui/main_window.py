@@ -266,7 +266,24 @@ class MainWindow:
         if key not in self._holders:
             # fallback to first registered tab
             key = next(iter(self._holders), None)
-        if key:
+        # FIRST open: put the shell on screen before building the tab content.
+        # Building a tab costs a few hundred ms (themed widget creation + the
+        # first chart draw) and Tk cannot paint while that runs, so deiconifying
+        # afterwards (as this used to) meant the user saw nothing at all for the
+        # whole time. The window is mapped here and the content build is handed
+        # to after_idle, so the shell paints first and the tab fills in next.
+        first_open = not self._tabs
+        if first_open:
+            try:
+                win.deiconify()
+                win.lift()
+                win.update_idletasks()
+            except Exception:
+                pass
+
+        def _present():
+            if not key:
+                return
             try:
                 w = self._ensure_tab(key)
                 self._notebook.select(self._holders[key])
@@ -277,6 +294,14 @@ class MainWindow:
                         w.refresh()
             except Exception:
                 pass
+
+        if first_open:
+            try:
+                win.after_idle(_present)
+            except Exception:
+                _present()
+        else:
+            _present()
         try:
             win.deiconify()
             win.lift()

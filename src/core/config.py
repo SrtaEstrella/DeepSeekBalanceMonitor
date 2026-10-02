@@ -1,10 +1,11 @@
-﻿"""
+"""
 Constants, i18n, logging, config load/save, DPI awareness.
 Imported by all other modules.
 """
 import ctypes
 import json
 import os
+import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -63,6 +64,7 @@ _T = {
         "last_check":       "上次查询：",
         "not_checked":      "尚未查询",
         "error_no_key":     "未配置 API Key",
+        "already_running":  "DeepSeek Balance Monitor 已在运行，请使用托盘图标。",
         "view_balance":     "⚡ 余额速览",
         "check_now":        "🔄 立即查询",
         "top_up":           "🌐 控制台",
@@ -230,6 +232,7 @@ _T = {
         "last_check":       "Last check:",
         "not_checked":      "Not checked",
         "error_no_key":     "No API Key configured",
+        "already_running":  "DeepSeek Balance Monitor is already running — use the tray icon.",
         "view_balance":     "⚡ Balance Glance",
         "check_now":        "🔄 Check Now",
         "top_up":           "🌐 Console",
@@ -459,6 +462,17 @@ def load_config() -> dict:
             return cfg
         except Exception as e:
             log(f"Failed to load config: {e}")
+            # Keep a copy before falling back to defaults: any later save would
+            # otherwise overwrite the unreadable file and the user's settings
+            # (plus the reason they failed to parse) would be gone for good.
+            # Same recovery path as the Rust builds' config.json.corrupt.
+            try:
+                if CONFIG_FILE.exists():
+                    backup = CONFIG_FILE.with_name(CONFIG_FILE.name + ".corrupt")
+                    shutil.copy2(CONFIG_FILE, backup)
+                    log(f"Backed up unreadable config to {backup.name}")
+            except Exception as e2:
+                log(f"Failed to back up unreadable config: {e2}")
 
     cfg = DEFAULT_CONFIG.copy()
     # ensure apis list

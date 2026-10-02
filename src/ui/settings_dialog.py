@@ -256,7 +256,7 @@ class SettingsFrame(ttk.Frame):
             lbl.bind("<Button-1>", lambda e: webbrowser.open(url))
             return lbl
         ver_row = ttk.Frame(scroll_frame); ver_row.pack(fill="x")
-        ttk.Label(ver_row, text="v1.2.7_260528",
+        ttk.Label(ver_row, text="v2.0.3 Dev",
                   foreground="gray").pack(side="left")
         _make_link(ver_row, "GitHub",
                    "https://github.com/SrtaEstrella/DeepSeekBalanceMonitor").pack(side="left", padx=(10, 0))

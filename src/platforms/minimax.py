@@ -60,14 +60,16 @@ def _parse_model_remains(remains_list, window_key):
     if h5_pct is not None:
         now = datetime.now(timezone.utc)
         reset_sec = max(0, h5_end - int(now.timestamp())) if h5_end else 0
-        result["5h"] = {"usage_percent": 100 - h5_pct, "percent_remaining": float(h5_pct), "reset_in_sec": reset_sec}
+        h5_rem = max(0.0, min(100.0, float(h5_pct)))   # shared contract §7.3
+        result["5h"] = {"usage_percent": 100.0 - h5_rem, "percent_remaining": h5_rem, "reset_in_sec": reset_sec}
     # weekly
     wk_pct = entry.get("current_weekly_remaining_percent")
     wk_end = _parse_timestamp(entry.get("weekly_end_time"))
     if wk_pct is not None:
         now = datetime.now(timezone.utc)
         reset_sec = max(0, wk_end - int(now.timestamp())) if wk_end else 0
-        result["weekly"] = {"usage_percent": 100 - wk_pct, "percent_remaining": float(wk_pct), "reset_in_sec": reset_sec}
+        wk_rem = max(0.0, min(100.0, float(wk_pct)))   # shared contract §7.3
+        result["weekly"] = {"usage_percent": 100.0 - wk_rem, "percent_remaining": wk_rem, "reset_in_sec": reset_sec}
     return result
 
 def fetch_minimax_quota(platform_key: str, api_key: str, http_proxy: str = "") -> dict:

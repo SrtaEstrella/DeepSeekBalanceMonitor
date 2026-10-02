@@ -136,9 +136,22 @@ class HistoryFrame(ttk.Frame):
             self._chart_vars[key] = var
             return var, canvas
 
-        _add_block("bal", T("block_balance", lang), [("30d_bal", T("days_30", lang)), ("7d_bal", T("days_7", lang))], "30d_bal")
-        _add_block("daily", T("block_daily", lang), [("180d_heat", T("days_180", lang)), ("30d_daily", T("days_30", lang))], "180d_heat")
-        _add_block("dist", T("block_dist", lang), [("30d_hourly", T("days_30", lang)), ("7d_hourly", T("days_7", lang))], "30d_hourly")
+        blocks = [
+            ("bal", T("block_balance", lang), [("30d_bal", T("days_30", lang)), ("7d_bal", T("days_7", lang))], "30d_bal"),
+            ("daily", T("block_daily", lang), [("180d_heat", T("days_180", lang)), ("30d_daily", T("days_30", lang))], "180d_heat"),
+            ("dist", T("block_dist", lang), [("30d_hourly", T("days_30", lang)), ("7d_hourly", T("days_7", lang))], "30d_hourly"),
+        ]
+        _add_block(*blocks[0])
+        # The remaining two blocks are created on later idle ticks. Each one costs
+        # tens of ms (themed widget creation + its own chart draw), and building
+        # all three in this single callback kept the freshly opened window frozen
+        # until it finished. One block per tick lets Tk paint in between; each
+        # canvas draws itself as soon as it is sized (its <Configure> binding).
+        def _add_rest(i=1):
+            if i < len(blocks):
+                _add_block(*blocks[i])
+                inner.after_idle(lambda: _add_rest(i + 1))
+        inner.after_idle(_add_rest)
 
         # give inner frame the scroll canvas width
         def _sync_inner_width(_e=None):
@@ -152,7 +165,18 @@ class HistoryFrame(ttk.Frame):
         self._on_api_selected()
 
     def _draw_block(self, key, canvas):
-        """Draw ONE chart block onto a given canvas (called by <Configure>/radios)."""
+        """Draw ONE chart block onto a given canvas (called by <Configure>/radios).
+
+        Nothing is drawn while the canvas still reports a placeholder width: the
+        <Configure> binding fires once when the widget is created (1x1) and again
+        when the geometry manager gives it its real size, and the build's own
+        _redraw_chart() runs before either. Drawing into the 1-pixel canvas was
+        pure waste — it created a full set of canvas items that the next draw
+        threw away (measured: 6 of the first open's 9 draws), and the extra
+        items also slowed the layout pass. The real-size <Configure> redraws it.
+        """
+        if canvas.winfo_width() <= 1:
+            return
         api_id = self._get_selected_api_id()
         is_pkg = (self._current_mode == "package")
         chart_type = self._chart_vars.get(key, tk.StringVar(value="")).get()
@@ -776,7 +800,14 @@ class HistoryFrame(ttk.Frame):
             pass
         if len(pts) >= 4:
             chart.create_line(pts, fill=color, width=2, smooth=True)
-            for x, y in zip(pts[::2], pts[1::2]):
+            # One dot per point would add hundreds of canvas items on a dense
+            # series (a 30-day balance line has ~730 points) and Tk repaints
+            # every item on each layout/paint pass. The hover tooltip reads
+            # `_hover_pts` (a Python list), not these items, so an evenly
+            # sampled subset keeps the look and drops the item count by >90%.
+            step = max(1, len(vals) // 48)
+            for i in range(0, len(vals), step):
+                x, y = pts[2 * i], pts[2 * i + 1]
                 chart.create_oval(x - 2, y - 2, x + 2, y + 2, fill=color, outline="")
 
     def _draw_bar(self, labels, vals, y_fmt="{:.0f}", color="#3C6966", canvas=None, chart_h=None):

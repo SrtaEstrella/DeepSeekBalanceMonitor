@@ -450,6 +450,121 @@ class ConsumptionRateBalanceBaseTests(unittest.TestCase):
                          "topped -0.23 + granted 6.00 must become 6.00 usable, not 5.76")
 
 
+class RustParityTests(unittest.TestCase):
+    """Fixes the Rust builds shipped from 1.3.3 on that the Python build lacked.
+
+    SQLite WAL + indexes, the corrupt-config backup, the single-instance lock
+    and the clamped quota percentages (all 1.4.2), plus the CNY-preferring
+    balance pick that keeps `threshold_yuan` from being compared with USD.
+    """
+
+    def _temp_db(self):
+        fd, db = tempfile.mkstemp(suffix=".db")
+        import os
+        os.close(fd)
+        patch_db = patch("src.core.storage.DB_FILE", Path(db))
+        patch_db.start()
+        self.addCleanup(patch_db.stop)
+        self.addCleanup(lambda: Path(db).unlink(missing_ok=True))
+        return db
+
+    # ── SQLite: WAL + indexes ────────────────────────────────────────────────
+    def test_sqlite_enables_wal_and_indexes(self):
+        self._temp_db()
+        from src.core.storage import _connect, _connect_package
+        for connect, index in ((_connect, "idx_balance_api_ts"),
+                               (_connect_package, "idx_package_api_ts")):
+            conn = connect()
+            try:
+                mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+                self.assertEqual(mode.lower(), "wal", "WAL keeps readers off the writer's lock")
+                # No busy-timeout statement is issued: Python's sqlite3 already
+                # connects with 5 s, which is the behaviour we rely on. The
+                # assertion documents that assumption.
+                self.assertEqual(conn.execute("PRAGMA busy_timeout").fetchone()[0], 5000)
+                names = {r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index'")}
+                self.assertIn(index, names)
+            finally:
+                conn.close()
+
+    # ── Corrupt config is preserved before defaults take over ────────────────
+    def test_unreadable_config_is_backed_up(self):
+        tmp = tempfile.mkdtemp()
+        cfg_file = Path(tmp) / "config.json"
+        cfg_file.write_text("{ this is not json", encoding="utf-8")
+        with patch("src.core.config.CONFIG_FILE", cfg_file), \
+             patch("src.core.config.log"):
+            from src.core.config import load_config
+            cfg = load_config()
+        self.assertEqual(cfg.get("interval_minutes"), DEFAULT_CONFIG["interval_minutes"])
+        self.assertTrue((Path(tmp) / "config.json.corrupt").exists(),
+                        "the unreadable config must be copied before falling back")
+
+    # ── Single-instance lock ─────────────────────────────────────────────────
+    @unittest.skipUnless(sys.platform == "win32", "named mutex is Windows-only")
+    def test_second_instance_is_refused(self):
+        import ctypes
+        from src.core import paths as paths_mod
+        paths_mod._INSTANCE_HANDLE = None
+        self.addCleanup(lambda: setattr(paths_mod, "_INSTANCE_HANDLE", None))
+        k32 = ctypes.windll.kernel32
+        k32.CreateMutexW.restype = ctypes.c_void_p
+        k32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+        k32.CloseHandle.argtypes = [ctypes.c_void_p]
+        held = k32.CreateMutexW(None, 0, f"Local\\{paths_mod.APP_ID}")
+        self.assertTrue(held, "could not create the test mutex")
+        self.addCleanup(lambda: k32.CloseHandle(ctypes.c_void_p(held)))
+        self.assertFalse(paths_mod.acquire_single_instance(),
+                         "a held mutex must turn the second instance away")
+
+    # ── Export path expansion (%USERPROFILE% / ~) ────────────────────────────
+    def test_export_path_expands_variables_and_home(self):
+        from src.core.storage import _resolve_export_path
+        expanded = _resolve_export_path("%USERPROFILE%/balance.csv")
+        self.assertNotIn("%USERPROFILE%", expanded)
+        self.assertTrue(expanded.endswith("balance.csv"))
+        self.assertNotIn("~", _resolve_export_path("~/balance.csv"))
+
+    # ── Quota percentages clamped to 0–100 (shared contract §7.3) ───────────
+    def test_opencode_percentage_is_clamped(self):
+        payload = {"usage": {"rolling": {"status": "ok", "percent": 150}}}
+        with patch("src.platforms.opencode.http_get_json", return_value=payload), \
+             patch("src.platforms.opencode._install_proxy"):
+            from src.platforms.opencode import fetch_opencode_quota
+            quota = fetch_opencode_quota("key")
+        self.assertEqual(quota["rolling"]["usage_percent"], 100.0)
+        self.assertEqual(quota["rolling"]["percent_remaining"], 0.0)
+
+    def test_glm_percentage_is_clamped(self):
+        payload = {"code": 0, "success": True, "data": {"limits": [
+            {"type": "TOKENS_LIMIT", "percentage": 150},
+            {"type": "TOKENS_LIMIT", "percentage": -20}]}}
+        with patch("src.platforms.glm.http_get_json", return_value=payload), \
+             patch("src.platforms.glm._install_proxy"):
+            from src.platforms.glm import fetch_glm_quota
+            quota = fetch_glm_quota("key", platform_key="glm_coding_cn")
+        self.assertEqual(quota["5h"]["usage_percent"], 100.0)
+        self.assertEqual(quota["5h"]["percent_remaining"], 0.0)
+        self.assertEqual(quota["weekly"]["usage_percent"], 0.0)
+        self.assertEqual(quota["weekly"]["percent_remaining"], 100.0)
+
+    def test_minimax_percentages_are_clamped(self):
+        payload = {"base_resp": {"status_code": 0}, "data": {"model_remains": [
+            {"model_name": "general",
+             "current_interval_remaining_percent": 150,
+             "current_weekly_remaining_percent": -5,
+             "end_time": 0, "weekly_end_time": 0}]}}
+        with patch("src.platforms.minimax.http_get_json", return_value=payload), \
+             patch("src.platforms.minimax._install_proxy"):
+            from src.platforms.minimax import fetch_minimax_quota
+            quota = fetch_minimax_quota("minimax_token_cn", "key")
+        self.assertEqual(quota["5h"]["percent_remaining"], 100.0)
+        self.assertEqual(quota["5h"]["usage_percent"], 0.0)
+        self.assertEqual(quota["weekly"]["percent_remaining"], 0.0)
+        self.assertEqual(quota["weekly"]["usage_percent"], 100.0)
+
+
 class ServiceStatusParsingTests(unittest.TestCase):
     """The DeepSeek status parse was structurally unable to report an incident.
 

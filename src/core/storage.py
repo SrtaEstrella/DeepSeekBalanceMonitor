@@ -2,6 +2,7 @@
 Balance history storage — SQLite-backed, for spend-rate / trend analysis.
 """
 import csv
+import os
 import sqlite3
 from datetime import datetime
 
@@ -13,6 +14,11 @@ from src.platforms.registry import billing_col as BILLING_COL_MAP_REF
 def _connect():
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_FILE))
+    # WAL keeps the readers (Rainmeter thread, history window, macOS app) off
+    # the writer's lock. No busy-timeout statement is needed: Python's sqlite3
+    # already connects with a 5 s timeout, so a lost write race waits instead
+    # of raising "database is locked".
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS balance_history (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,6 +35,13 @@ def _connect():
     for col in ("service_status TEXT", "api_id TEXT"):
         try:
             conn.execute(f"ALTER TABLE balance_history ADD COLUMN {col}")
+        except sqlite3.OperationalError:
+            pass
+    # Indexes for the two shapes every reader uses: (api_id, timestamp) and timestamp.
+    for ddl in ("CREATE INDEX IF NOT EXISTS idx_balance_api_ts ON balance_history(api_id, timestamp)",
+                "CREATE INDEX IF NOT EXISTS idx_balance_ts ON balance_history(timestamp)"):
+        try:
+            conn.execute(ddl)
         except sqlite3.OperationalError:
             pass
     # migrate legacy rows with NULL api_id to preferred_api_id if available
@@ -499,6 +512,16 @@ def get_history_by_date(date_str: str, api_id: str | None = None):
         return []
 
 
+def _resolve_export_path(path: str) -> str:
+    """Expand `~` and %VARS% so a path like %USERPROFILE%\\balance.csv works.
+
+    The settings field hints at environment variables, but the literal string
+    used to be opened as-is — creating a directory actually named
+    "%USERPROFILE%" (the Rust builds fixed the same thing).
+    """
+    return os.path.expandvars(os.path.expanduser(path or ""))
+
+
 def export_all_csv(path: str, api_id: str | None = None) -> int:
     """Export balance records to CSV. Filter by api_id if given."""
     try:
@@ -511,7 +534,7 @@ def export_all_csv(path: str, api_id: str | None = None) -> int:
                 "SELECT timestamp, currency, total, topped, granted, service_status, api_id FROM balance_history ORDER BY timestamp ASC"
             )
         count = 0
-        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        with open(_resolve_export_path(path), "w", newline="", encoding="utf-8-sig") as f:
             w = csv.writer(f)
             w.writerow(["timestamp", "currency", "total", "topped", "granted", "service_status", "api_id"])
             for r in cur:
@@ -536,7 +559,7 @@ def export_package_csv(path: str, api_id: str | None = None) -> int:
                 "SELECT timestamp, h5_percent, h5_reset, weekly_percent, weekly_reset, monthly_percent, monthly_reset, service_status FROM package_history ORDER BY timestamp ASC"
             )
         count = 0
-        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        with open(_resolve_export_path(path), "w", newline="", encoding="utf-8-sig") as f:
             w = csv.writer(f)
             w.writerow(["timestamp", "h5_used%", "h5_reset_sec", "weekly_used%", "weekly_reset_sec",
                         "monthly_used%", "monthly_reset_sec", "service_status"])
@@ -756,6 +779,8 @@ def _slice_busy_intervals(parsed, m_sec):
 def _connect_package():
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_FILE))
+    # Same WAL setting and index shapes as _connect() above.
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS package_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -775,6 +800,12 @@ def _connect_package():
         conn.execute("ALTER TABLE package_history ADD COLUMN service_status TEXT")
     except sqlite3.OperationalError:
         pass
+    for ddl in ("CREATE INDEX IF NOT EXISTS idx_package_api_ts ON package_history(api_id, timestamp)",
+                "CREATE INDEX IF NOT EXISTS idx_package_ts ON package_history(timestamp)"):
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     return conn
 

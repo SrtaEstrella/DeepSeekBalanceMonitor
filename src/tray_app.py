@@ -848,12 +848,71 @@ def main():
     log("=" * 50)
     log(f"{APP_NAME} starting")
 
+    # Single instance (parity with the Rust Windows build's named mutex): a
+    # second tray would fight this one over the SQLite file and the tray icon.
+    from src.core.paths import acquire_single_instance
+    if not acquire_single_instance():
+        log("Another instance is already running - exiting")
+        try:
+            # A plain messagebox is modal: unattended, it would keep this
+            # process (and its ~60 MB) alive until someone clicked OK. Show a
+            # notice that closes itself instead, then exit either way.
+            from tkinter import Tk, Label
+            # NOTE: do not re-import T / load_config here. A function-level
+            # import binds the name locally for the WHOLE function, so the warm-up
+            # below (which runs on the normal path, before this branch executes)
+            # raised UnboundLocalError — both names already come from module
+            # scope. This is the trap recorded in CONTRIBUTING's dev notes.
+            notice = Tk()
+            notice.title(APP_NAME)
+            notice.attributes("-topmost", True)
+            Label(notice, text=T("already_running", load_config().get("language", "zh")),
+                  padx=18, pady=14).pack()
+            notice.after(5000, notice.destroy)
+            notice.mainloop()
+        except Exception:
+            pass
+        return
+
     _tk_root = tk.Tk()
     _tk_root.withdraw()
 
     app = AppState()
     app._tk_root = _tk_root
     app._main_window = None
+
+    # One-time Windows/Tk warm-up. The FIRST ttk.Button whose label carries an
+    # emoji costs 0.6-0.9 s: the native vista theme initialises the emoji font
+    # fallback on that call (a ttk.Label or a plain font measurement does not
+    # trigger it). The main window's first two buttons are exactly such labels,
+    # so that bill used to land on the first open — measured 964 ms before,
+    # 173 ms after paying it here, where start-up is already busy.
+    try:
+        import tkinter.ttk as _ttk
+        _warm = _ttk.Button(_tk_root, text=T("check_now", app.lang))
+        _warm.update_idletasks()
+        _warm.destroy()
+    except Exception as e:
+        log(f"Tk warm-up skipped: {e}")
+
+    # Second half of the same idea: the first Toplevel this process maps pays a
+    # one-time window/theme cost (measured ~0.2-0.3 s) before anything appears on
+    # screen, which would otherwise be part of the first time the main window
+    # opens. Map an invisible (alpha 0) window here, with a few themed widgets in
+    # it, and drop it again.
+    try:
+        import tkinter.ttk as _ttk2
+        _pw = tk.Toplevel(_tk_root)
+        _pw.attributes("-alpha", 0.0)
+        _pw.geometry("480x320")
+        for _ in range(4):
+            _ttk2.Label(_pw, text="warm").pack()
+        _pw.deiconify()
+        _pw.update()
+        _pw.destroy()
+    except Exception as e:
+        log(f"Window warm-up skipped: {e}")
+
     app._trigger_check = lambda a=app: threading.Thread(target=do_balance_check, args=(a,), daemon=True).start()
     # entry callback for the automatic poll loop — do_balance_check re-arms it
     # in a finally block after every cycle

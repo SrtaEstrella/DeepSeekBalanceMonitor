@@ -19,7 +19,10 @@ def _start_server(app):
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
-            self.send_header("Access-Control-Allow-Origin", "*")
+            # No Access-Control-Allow-Origin: the response carries balance and
+            # subscription data, and a wildcard would let any page open in the
+            # browser read it (or call /check through it). Rainmeter's WebParser
+            # does not need CORS — same hardening the Rust builds carry.
             self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(json.dumps(body, ensure_ascii=False).encode("utf-8"))

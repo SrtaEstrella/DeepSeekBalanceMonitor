@@ -30,6 +30,7 @@ def _parse_window(data: dict, key: str) -> dict | None:
             reset_sec = max(0, int((reset_dt - now).total_seconds()))
         else:
             reset_sec = int(w.get("resetInSec", 0))
+        up = max(0.0, min(100.0, up))   # shared contract §7.3: clamp to [0, 100]
         return {"usage_percent": up, "percent_remaining": max(0.0, 100.0 - up), "reset_in_sec": reset_sec}
     except Exception:
         return None
