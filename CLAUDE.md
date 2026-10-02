@@ -108,6 +108,14 @@ dsmon opencode-go set-key <api_key>   # 加密保存 API Key
 - 调用 `get_consumption_rate()` 注意返回值语义：`hourly_rate` 而非旧 `daily_rate`
 - 显示格式统一——中文 `📊 忙时消耗 0.06/小时 | 预计可用 28 天 4 小时`；英文 `📊 Busy: 0.06/hr | Est. 28d 4h remaining`
 - Rainmeter 取 `estimated_line` 字段；Plasma 直接从 `consumption_rate` 计算；Rust 版已跟进此算法
+- **样本时长门槛（v2.0.3 Dev）**：参与加权的区间必须不短于 `max(60 秒, 半个轮询周期)`，替代原先 0.01 小时（36 秒）的经验值——46 秒区间携带 0.08 落差时会独占权重、外推出 6.26/小时
+
+### 余额与统计口径（Python v2.0.3 Dev）
+
+- Python 版当前版本 **v2.0.3 Dev**：应用内显示于设置页作者块上方；exe 版本资源见 `scripts/version_info.txt`
+- **负分量不是可用余额**：DeepSeek 各分量各自钳 0，`total_balance` 由钳后分量重算（`充值 -0.10 + 赠送 6.00` → **6.00**，而非 API 原始相加 5.90）；历史负分量行在 `storage._connect()` 幂等修正（`WHERE topped<0 OR granted<0`）
+- **统计读 `total`，不读 `topped`**：消耗可能走赠送余额，只读充值列会得到恒定序列（实测速率恒 0、预计可用算出负值）；预计可用基数 `max(0, 最新 total)`
+- 注意 `total = 充值 + 赠送` 并非所有平台成立（OpenRouter 的 `topped_up_balance` 是累计充值而非剩余现金），故不得对全部历史行按分量重算
 
 ### 图标颜色状态
 
@@ -128,7 +136,7 @@ dsmon opencode-go set-key <api_key>   # 加密保存 API Key
 ### API 端点与代理
 
 - `api.deepseek.com/user/balance` — 余额查询
-- `status.flashcat.cloud/deepseek` — FlashDuty 服务状态（RSC 解析），已弃用 `status.deepseek.com/api/v2`
+- `status.deepseek.com` — DeepSeek 服务状态（FlashDuty 托管，RSC 解析）；**双源**：该规范域名优先，失败回退 FlashDuty 后端主机 `cn.statuspage.flashduty.com/deepseek`。⚠️ 早期使用的 `status.flashcat.cloud/deepseek` 是 **FlashDuty 自家**状态页（302 到根、无 DeepSeek 数据），已弃用；旧接口 `status.deepseek.com/api/v2` 亦已弃用
 - 代理：`http_proxy` 配置项 + `proxy_enabled` 开关；禁用时保留代理地址不清除
 
 ### 版本工具链
@@ -143,3 +151,7 @@ dsmon opencode-go set-key <api_key>   # 加密保存 API Key
 - Rust 双端统一使用 rustls + webpki-roots，根证书内嵌二进制、不依赖系统证书库；根证书数据靠升级 webpki-roots 依赖维护（原 Win7/8.1 根证书脚本已移除，Python 版仅支持 Win10+）
 - Rust Windows 版声明系统 DPI 感知（app.manifest）并启用 nwg `high-dpi` feature：控件坐标一律按 96 DPI 逻辑像素书写、运行时自动缩放；字体必须用显式 `size_absolute`，`lfHeight=0` 的映射器默认高度不会随 DPI 缩放
 - macOS 构建脚本在 `src/mac` 下运行；改动 macOS 相关文件时遵循现有目录约束
+- **单实例**：Python 版与 Rust 版一致，二次启动被拒（Windows 命名互斥体 / 其它平台 flock），提示后退出；`scripts/build_exe.bat` 会等旧进程真正退出再启动新构建，否则新 exe 会被锁拒绝而留下旧版在托盘里
+- **本地状态接口不向浏览器开放**：Rainmeter 端点不返回 `Access-Control-Allow-Origin`（该接口携带余额与订阅数据；Rainmeter WebParser 不需要 CORS）
+- **SQLite**：连接时启用 WAL 并带 `(api_id, timestamp)`、`timestamp` 索引；busy timeout 无需自行设置（Python `sqlite3.connect()` 默认 5 s）
+- **首次打开主界面：Tk 预热与绘制约束**：`tray_app.main()` 启动时预热两件事——首个带 emoji 的 `ttk.Button`（Windows 上 0.6–0.9 s，emoji 字体回退）与一个 `-alpha 0` 的不可见窗口（进程内首个 Toplevel 首帧 0.2–0.3 s）。看板侧另有三条：画布 `<Configure>` 会先以 1×1 触发（尺寸未就绪勿绘）、画布图元数量即绘制成本（折线圆点已等比抽样 ≤48）、三个图表区块每空闲 tick 建一个且主窗先映射再构建 tab

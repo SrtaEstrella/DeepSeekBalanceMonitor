@@ -1,14 +1,14 @@
 # Contributing
 
-> 本文档描述 v2.0.2 的 Python-Windows 运行时架构与各端约定，供贡献者快速建立基线。
+> 本文档描述 v2.0.3 Dev 的 Python-Windows 运行时架构与各端约定，供贡献者快速建立基线。
 > 权威细节（配置/密钥存储/多平台矩阵/忙时算法）见 `CLAUDE.md`；agent 高信号事实见 `AGENTS.md`。
 > 同一功能存在 Python 与 Rust 双实现，修改 API 客户端 / 忙时速率算法 / 告警逻辑时必须同步检查两端。
 
 ## 项目状态
 
-v2.0.2 包结构；15 平台（DeepSeek/Kimi/StepFun/OpenRouter 按量 + OCGo/MiniMax/Command Code/GLM 套餐）；管理页设为首选按钮；并行/单打双查询模式；Python 与 Rust 双实现。
+v2.0.3 Dev 包结构；15 平台（DeepSeek/Kimi/StepFun/OpenRouter 按量 + OCGo/MiniMax/Command Code/GLM 套餐）；管理页设为首选按钮；并行/单打双查询模式；Python 与 Rust 双实现。
 
-### 架构总览（v2.0.2 包结构）
+### 架构总览（v2.0.3 Dev 包结构）
 
 ```
 src/
@@ -65,13 +65,13 @@ src/
 - 添加新平台只需在 PLATFORMS 字典加一行
 - 同文件还承载共享常量：`BILLING_COL_MAP/billing_col()`、`STATUS_ICON`
 
-### 1.1 GLM Coding Plan 与 OpenRouter
+### 2. GLM Coding Plan 与 OpenRouter
 
 - `glm_coding_cn/global`（`src/platforms/glm.py`）：半公开监控端点 `GET /api/monitor/usage/quota/limit`（open.bigmodel.cn / api.z.ai），Bearer 认证（401 时回退裸 Key 一次）；`TOKENS_LIMIT` 第 0/1 条 → 5h/weekly，`TIME_LIMIT` → monthly（MCP 次数）；默认周窗口首选
 - `openrouter`（`src/platforms/openrouter.py`）：**仅 Management Key** 可用——`GET /api/v1/credits` 得账户 USD 余额（total_credits − total_usage）；普通推理 Key（401/403）直接报"Invalid or non-management API key"，无 /key 降级
 - 两者均无状态页、无套餐忙时预留
 
-### 2. Command Code 平台（`src/platforms/command_code.py`）
+### 3. Command Code 平台（`src/platforms/command_code.py`）
 
 - 接口：`GET https://api.commandcode.ai/alpha/whoami`（取 orgId，失败容忍）→ `alpha/billing/credits`（Bearer 认证；无 orgId 也可查）
 - 档位自动识别（平台 key 只决定默认计费窗口与插值池）：
@@ -84,15 +84,17 @@ src/
 - billing_period 平台默认贯通各消费点：icon_renderer、history_dialog（信息栏/折线/日志列/容耗图 `_get_billing_col`）、tray 通知栏均按 `get_platform(...).default_billing_period` 解析；API 表单未选项时落平台默认
 - 若 5h/week/monthly 全缺 → ValueError（无窗口可显示）
 
-### 2.1 余额插值模型（OCGo 周/月剩余精化，`storage.get_refined_remaining(_series)`）
+### 4. 余额插值模型（OCGo 周/月剩余精化，`storage.get_refined_remaining(_series)`）
 
 - 目标：把 API 整数周/月剩余%（1% 步长）插值为连续小数（如 70 → 70.43）；日消耗分布为次生
-- **取整语义实证为 round**（区间交集实验排除 floor 5%；绝对重建排除 ceil 0.4%）
-- **池比换算**：5h=$12 / 周=$30 / 月=$60（`window_pools`）；细粒度 5h 实际消耗美元 / 每 1% 粗额平均美元 = 档内消耗进度
-- 模型：`剩余 = 100 − (起步 usage+0.5 + Σ 每行区间真实 5h 消耗$ ÷ 每粗% 平均$)`；**仅按真实消耗推进**（不摊速率），下钳防穿越，**严格因果**（每点只用前驱，新增在线行不影响历史值）；无 5h 消耗行保持平段（真无消耗）
+- **取整语义实证为 round**（区间交集实验排除 floor 5%；绝对重建排除 ceil 0.4%）——因此区间是 `(obs−0.5, obs+0.5]`，**不是** floor 语义的 `(obs−1, obs]`：一位小数下的整数位由 round 决定，允许落在 `raw±0.5` 内（floor 区间会把估计钉在 raw 之上，实测 864/1258 点偏差 >0.5）
+- **池比推进**：5h=$12 / 周=$30 / 月=$60（`window_pools`）；每行推进量 = 该行真实 5h 消耗美元 × 100 ÷ **目标窗口池额**（已知常量）。**切勿改用经验比率**（如「累计消耗/累计涨幅」）：5h 是滚动窗口，重置会吞掉消费，比率偏低约 9%，估计会漂到观测整数之上（曾出现 raw 66 而精化 63.0）
+- 模型：维护连续用量估计 `u_cont`，周期重置时锚定为 `obs`；每行 `u_cont += d_usd × 100 ÷ 池额`（仅 `b5 > a5` 时），随后钳到 `(obs−0.5+0.06, obs+0.5−0.06]`——0.06 是显示余量（值先按 2 位存储、再按 1 位格式化，正好 x.5 会跨界）；输出 `剩余 = round(100 − u_cont, 2)`
+- **严格因果**（每点只用前驱，新增在线行不改历史值）+ **周期内单调**（余额只降，仅周期重置才跳升）；无 5h 消耗行保持平段（真无消耗）
+- 小数位只会落在 **0.2 网格**上（1 个 5h 整数点 = $0.12 = 月池的 0.2%），这是数据分辨率的极限，不是缺陷
 - 5h 自身取整（自身窗口整数）不作处理；无 `window_pools` 的平台（minimax/glm、command_code 标准条目）回落原始整数
 
-### 3. 管理 Tab `src/manage_frame.py`（合并 API管理+流水）
+### 5. 管理 Tab `src/manage_frame.py`（合并 API管理+流水）
 
 - 上半部 = 完整 ApiManagementFrame（增删改查/表单/billing_period）+ ⭐设为首选按钮
 - 设为首选复用托盘 `_apply_preferred_switch` 完整链（图标/缓存/主窗同步）；当前首选行按钮禁用并显示"已是首选"
@@ -103,7 +105,7 @@ src/
 - **陷阱**：mgmt.refresh() 会触发 on_change → 不得在 _on_api_change 中再回调 mgmt.refresh（递归爆栈）；改为 mgmt.refresh() 末尾重发 `_on_select()` 单向同步
 - 首选切换必须走 tray 的 `_apply_preferred_switch` 完整链——仅 set_preferred_api 不刷新图标/缓存
 
-### 4. 看板 HistoryFrame
+### 6. 看板 HistoryFrame
 
 - 信息栏：Text widget（固定像素×DPI holder + pack_propagate(False)）
   - payg：大字加粗余额（tag_raise("big") 保证优先级）+ 今日消耗/30d日均 + 状态 + 速率 + 上次查询
@@ -119,14 +121,14 @@ src/
 - **悬浮提示**：canvas._hover_pts 记录命中区域；折线=点命中，柱状=整列矩形命中（零高度柱可命中），热力图=格子矩形；tooltip 贴边翻转防出界
 - API 选择器：手动选择保留，`follow_preferred=True` 时跟随 config 首选（托盘切换/设置保存/on_show 传入）；下拉显示仅 API 名称（同名自动 ` #2` 序号），不带平台括注
 
-### 5. 热力图 `_draw_heatmap`
+### 7. 热力图 `_draw_heatmap`
 
 - GitHub 风格：周列（周一首行）、5级绿色渐变按相对量
 - 纵向撑满固定画布（cell 由高度反推）、水平居中
 - 星期标签贴网格左缘；月份标签位于网格上方留间距；图例已移除
 - payg 用落差、package 用涨幅（正增量累加口径同日消耗）
 
-### 6. 双模式与多平台余额
+### 8. 双模式与多平台余额
 
 - `apis[].mode`: `payg`/`package`；`apis[].billing_period`: per-API（管理表显示原始字面值）
 - 套餐忙时速率已移除（量化百分比下切片算法失真）；日消耗保留
@@ -134,8 +136,18 @@ src/
   - total_balance = 可用余额；topped_up_balance = 充值/现金；granted_balance = 赠送/代金券
   - Kimi: available/voucher/cash；StepFun: balance/total_cash_balance/total_voucher_balance
   - 货币随平台区域标注（CNY/USD），写入 balance_history.currency 列
+  - **一个账号固定只有一种币种**（CNY 或 USD，由平台区域决定）：`all_balances` 实际只含一条——Kimi/StepFun 的 CN 与 Global 本就是两个独立平台条目，OpenRouter 恒为 USD，DeepSeek 同一账号的 `balance_infos` 也只有一条。所以不存在"同一账号内多币种取舍"的问题，**勿新增"优先某种币种"的逻辑**：前提不成立时它恒等于取首条（Rust 侧曾有过这类想当然的改动）。USD 账号的 `threshold_yuan` 按美元数值填写即可
+- **负值语义**：负的分量不是可用余额——DeepSeek 各分量各自钳 0，且 `total_balance` 由**钳后分量重算**（`充值 -0.10 + 赠送 6.00` → 可用 **6.00**，而非 API 原始相加的 5.90）。历史中已存的负分量行在 `storage._connect()` 内幂等修正（仅 `WHERE topped<0 OR granted<0`）
+- **陷阱**：`total = 充值 + 赠送` 并非所有平台成立——OpenRouter 的 `topped_up_balance` 是**累计充值**而非剩余现金（`total = total_credits − total_usage`），因此不得对全部历史行按分量重算；上述修正的 WHERE 条件正是为此收窄
 
-### 7. 托盘与通知
+### 9. 统计口径（消耗速率与预计可用）
+
+- 速率与「预计可用」基数都读 `balance_history.total`，**不是 `topped`**：消耗可能走赠送余额，只读充值列会得到恒定序列（实测充值恒为 -0.23 → 速率恒 0、预计可用算出负值，界面显示"预计可用忙时 -0.1 小时"）
+- 预计可用基数 `max(0.0, 最新 total)` 钳 0（非正余额按耗尽处理）
+- 最短速率样本 = `max(60 秒, 半个轮询周期)`，替代原先 0.01 小时（36 秒）的经验值：一个 46 秒区间携带 0.08 落差时会独占权重、外推出 6.26/小时
+- 7 天口径无有效样本时回退保留窗口；客户端不重算（`docs/INTERFACES.md` §1.4）
+
+### 10. 托盘与通知
 
 - **双查询模式**（`config.fetch_mode`: `"parallel"` / `"onehot"`，设置页可选，默认 parallel）：parallel = 每轮查全 API；onehot = 仅查首选 API（服务状态也只抓首选平台）；onehot 无首选时本轮跳过查询、保留旧数据但**必须重排 schedule_next_check**（早返回前补调度，否则轮询停止）。缓存语义两模统一：被查询 API 走同一 merge（失败保留旧数据+只更新 error），未被查询的缓存完全不动
 - 并行查询所有 API + 按平台并行抓服务状态（statuses dict 按 api.platform 分发入缓存，合并而非覆盖）
@@ -146,11 +158,17 @@ src/
 - 峰谷时提醒（默认关，勾选框与API状态变化提醒同行）：GMT+8 周一至五 9–12/14–18 为 △peak，周末与其余为 ▽valley；相位翻转一次性通知；仅首选为 deepseek 时生效
 - 单日消耗过快提醒（默认关）：当日忙时正增量达到线值（payg CNY / package %，package 按平台默认窗口）触发一次通知；图标同步变橙
 
-### 8. 服务状态
+### 11. 服务状态
 
-- DeepSeek → FlashDuty；MiniMax → status.minimax.io (LLM 组件)；OCGo/Kimi/StepFun/Command Code → 无
+- DeepSeek → **双源**：`status.deepseek.com`（规范域名，即页面 `custom_domain`）优先，失败回退 FlashDuty 后端主机 `cn.statuspage.flashduty.com/deepseek`；MiniMax → status.minimax.io (LLM 组件)；OCGo/Kimi/StepFun/Command Code → 无
+- **历史陷阱**：早期使用的 `status.flashcat.cloud/deepseek` 是 **FlashDuty 自家**状态页（302 到根页面，整页 0 处 deepseek），解析器却照旧返回 operational——该功能因此只可能输出「服务正常」或「状态未知」，异常状态结构上无法出现
+- 解析实现（`platforms/deepseek.py` 的 `fetch_service_status()` / `parse_status_page()`）：
+  - **页面身份校验**：必须找到 API 类组件（`API\s*服务|API\s*Service`，真实名为 `DeepSeek V4 Pro API服务(API Service)` 等），否则返回 None（界面显示"服务状态未知"）——**认不出就报未知，绝不假报"服务正常"**
+  - **RSC 解码**：逐个 `self.__next_f.push([1,"…"])` 块 `json.loads` 解出字符串字面量，再用**带字符串状态的括号配对**取 `active_changes`；禁止用 `\[[^\]]*\]` 这类正则在原文上抓取——告警激活时 `affected_components` 嵌套会让正则截断，`json.loads` 抛错后被兜底 except 吞掉，正好把真实故障变成"未知"
+  - 只看 API 类组件；`resolved/completed/scheduled` 的变化不计入；未识别状态按 degraded 计入（**不回落 `none`**）
+  - 指示值遵循 `docs/INTERFACES.md` §7.4 的归一表（含 `degraded_performance` → minor、`major_outage` → critical 两个别名）
 
-### 9. 设置页排版（SettingsFrame._build 单行化）
+### 12. 设置页排版（SettingsFrame._build 单行化）
 
 - 单行行式：查询间隔 / 语言 / 保留天数 / 导出路径 / 启用代理+地址同行；开机自启、Rainmeter 各自独立行
 - 预警线与单日线各自两行式：前导词完整表述一行 + 缩进组件行（按量/套餐双 spinbox + 低额/过快勾选框缀于对应行尾）
@@ -162,7 +180,7 @@ src/
 - 未保存弹框仅在**关闭窗口**时出现（hide()/show(key≠settings)/X 协议走 _leave_settings_check）；切 tab 不询问
 - 首选展示项已从设置页移除——由管理页 ⭐按钮取代；refresh_preferred_selector/preferred_combo/_pref_map 已删
 
-### 10. 历史表
+### 13. 历史表
 
 | 模式 | 表 | 列 |
 |---|---|---|
@@ -171,7 +189,7 @@ src/
 
 Ledger 树列由 `package_windows` + `has_status_page` 动态决定（package 分支勿漏 status 列追加）。
 
-### Rust 双实现
+### 14. Rust 双实现
 
 - rust-linux：CLI+守护+Plasma 小组件（`dsmon`），工具链固定 1.77.2（rust-toolchain.toml）；用户级安装免 sudo
 - rust-windows：nwg 原生 GUI，声明系统 DPI 感知（app.manifest + high-dpi feature，字体必须 size_absolute）；Command Code 额度显示 + Subscriptions 页
@@ -207,10 +225,20 @@ Ledger 树列由 `package_windows` + `has_status_page` 动态决定（package �
 - 所有 UI 文本必须在 _T 字典中；空值占位符 "-" 不用 em-dash
 - PowerShell `Set-Content -Encoding UTF8` 会写 BOM——批量改 py 文件后需剥离 BOM（ast.parse 报 U+FEFF 即此因），或改用 [IO.File]::WriteAllText + UTF8Encoding($false)
 - git 全局 http.proxy 指向 127.0.0.1:7890 但本地代理常未运行——用 `git -c http.proxy= fetch` 绕过直连
+- 本机 Clash 的 **fake-IP** 模式会把所有域名解析到 `198.18.0.0/16`，而 agent 的 `web_fetch` 会拒绝非公网 IP（SSRF 守卫）→ 外部网页一律取不到。需在 Clash 侧豁免：`%APPDATA%\Clash Plus\Clash Plus\shared_preferences.json` 的 `flutter.config` → `patchClashConfig`，置 `overrideDns: true` 并在 `dns.fake-ip-filter` 加入所需域名（如 `+.github.com`）；**改该文件必须先完全退出 Clash Plus**，否则退出时回写覆盖。另注意 `overrideDns: false` 时该 DNS 设置整块被 App 内置模板忽略
 - **Tk 陷阱集**：
   - Text tag 优先级=创建顺序逆序，后建覆盖先建（big 需 tag_raise）
   - Text height 单位按基础字体行高，混合字号需 holder 固定像素+pack_propagate(False)
   - 程序化 notebook.select() 不触发 <<NotebookTabChanged>>（真实点击才触发），关键转换需显式调用
   - window_create 的嵌入 widget 在 delete("1.0","end") 后不会自动销毁，需自行维护引用列表
   - emoji 为非 BMP 字符时勿用 "+Nc" 索引运算加 tag，直接分段 insert 带 tags
-- 函数内 `from X import log` 会把 log 变成局部名，导致同函数更早的 log() 调用 UnboundLocalError——闭包上层已有则勿再导入
+  - **首个文案带 emoji 的 `ttk.Button` 在 Windows 上要 0.6–0.9 s**（vista 主题在该次调用里初始化 emoji 字体回退，每进程一次；`ttk.Label` 与 `font.measure` 都不触发）。`tray_app.main()` 启动时用 `T("check_now", lang)` 预热一次
+  - **进程内第一个 Toplevel 的首帧绘制另需 0.2–0.3 s**（之后的窗口约 65 ms）。`tray_app.main()` 启动时还映射一个 `-alpha 0` 的不可见窗口（内含几个 ttk 控件）再销毁，把这笔一次性成本一起移出首开路径（实测首帧 327 → 65 ms）
+  - **ttk 控件在绘制阶段约 5–7 ms/个**（30 个 label 实测 264 ms）：首屏控件数量直接决定打开卡顿，别往首屏堆控件
+  - **画布 `<Configure>` 会在取得真实尺寸之前先触发一次（1×1）**：`_draw_block` 必须先判 `winfo_width() <= 1` 直接返回，否则会白造一整套随即被丢弃的图元（看板首开 9 次绘制里 6 次是这种）
+  - **画布图元数量就是绘制成本**：余额折线曾"每个数据点一个圆点"（30 天序列 = 729 个图元，占该区块 98%），而悬停命中判定读的是 `chart._hover_pts` 内存列表、并不需要这些图元 → 等比抽样到 ≤48 个即可保留观感
+- 函数内 `from X import log` 会把 log 变成局部名，导致同函数更早的 log() 调用 UnboundLocalError——闭包上层已有则勿再导入。**同类事故**：单实例提示块里多加的 `from src.core.config import load_config, T` 让 `T` 在 `main()` 全程成为局部名，于是正常路径上更早执行的 Tk 预热抛 `UnboundLocalError`（被 except 吞掉，只在日志留一行）——模块级已有 `T`/`load_config`，函数内不要再导入
+- **单实例**：`paths.acquire_single_instance()`（Windows 命名互斥体 `Local\<APP_ID>`，其它平台 `flock`）由 `tray_app.main()` 在最前面检查，已被占用时弹一个 5 秒自动关闭的提示再退出。注意用 `tk.Label`+`after` 而非 `messagebox`：后者是模态框，无人点击时会让进程（及其 ~60 MB）一直挂着
+- **构建脚本**：`scripts/build_exe.bat` 会先 kill 旧实例并**等它真正退出**再启动新构建——单实例锁生效后，若旧进程还在，新 exe 会直接退出，出现"以为在跑新版、其实是旧版"。脚本内延时用 `ping -n 2 127.0.0.1` 而非 `timeout`：`timeout` 需要控制台 stdin，在 CI / agent 这种 stdin 被重定向的场景会立即报 `Input redirection is not supported` 并变成空转
+- **SQLite**：`_connect()` / `_connect_package()` 每次连接设 WAL（文件级持久属性）并确保 `(api_id, timestamp)`、`timestamp` 索引存在。busy timeout 无需自行设置：Python 的 `sqlite3.connect()` 默认已是 5 s
+- **本地状态接口**：Rainmeter 的 HTTP 响应**不带** `Access-Control-Allow-Origin`——它携带余额与订阅数据，通配符会让浏览器里任意网页读到并可调 `/check`；Rainmeter 的 WebParser 不依赖 CORS，勿"顺手加回来"

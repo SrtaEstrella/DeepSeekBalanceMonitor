@@ -2,6 +2,35 @@
 
 所有值得记录的变更均记录于此。
 
+## Python v2.0.3 Dev (2026-10-02)
+
+### 新增
+
+- **GLM Coding Plan 与 OpenRouter 平台**：前者走半公开监控端点（401 时回退裸 Key），后者仅支持 Management Key；注册表扩至 15 平台
+- **并行 / 单打双查询模式**（`config.fetch_mode`）：单打模式只查首选 API，且早返回前必须补上轮询调度，否则自动轮询停止
+- **OCGo 余额插值模型**：把整数周/月剩余精化为连续小数（池比推进 + round 区间钳制），看板折线与坐标轴刻度随之精化；窗口标签改为「周余量 / 月余量」，插值结果按 1 位小数显示
+
+### 修复
+
+- **余额口径**：负的分量不再计入可用余额——`充值 -0.10 + 赠送 6.00` 现在读作 **6.00**，而非 API 原始相加的 5.90。`total` 由钳制后的分量重算，历史中已存的负分量行在打开数据库时幂等修正（只动 `topped<0 OR granted<0`，OpenRouter 那类「累计充值」列不受影响）
+- **统计口径**：消耗速率与「预计可用」此前读 `topped`（充值）列，充值恒定时速率恒为 0、预计可用甚至算出负值（显示「预计可用忙时 -0.1 小时」）；现改读 `total`（赠送余额参与统计），预计可用基数按 0 钳制
+- **DeepSeek 服务状态此前永远报「服务正常」**：原状态源 `status.flashcat.cloud/deepseek` 实际是 **FlashDuty 自家**状态页（302 到根页面，整页 0 处 deepseek），且组件名匹配与嵌套告警解析两处都与真实页面不符——该功能只可能输出「服务正常」或「状态未知」，异常状态在结构上无法出现。现改为双源（规范域名 `status.deepseek.com` 优先 + FlashDuty 后端主机 `cn.statuspage.flashduty.com/deepseek` 兜底）、页面身份校验（认不出即报「未知」，绝不假报正常）、RSC 分块解码 + 括号配对解析告警、只看 API 类组件，并补齐 `docs/INTERFACES.md` §7.4 的状态归一映射（`degraded_performance` → minor、`major_outage` → critical）
+- **速率样本门槛**：参与加权的区间最短时长改由轮询周期推导（`max(60 秒, 半个周期)`），替代 0.01 小时（36 秒）的经验值——此前一个 46 秒区间携带 0.08 落差即可独占权重、外推出 6.26/小时
+- **设置保存后自动轮询静默停止**：余额查询循环改在 `finally` 中重挂下一轮，设置保存改用 `restart_polling()` 原子取消并重启
+- **OCGo 精化剩余改用 round 区间语义**（`|精化 − 原始| ≤ 0.5`，与 API 取整整数一致），替代原 floor 区间——floor 区间会把估计钉在原始整数之上（实测 864/1258 点偏差 > 0.5）
+- **Command Code 月度额度改由窗口 cap 反推**（API 不再返回 `planId`），标准条目也能显示月度；`command_code_goat` 条目新增 `window_pools`（14/35/70）参与插值；加成额度不再产生负值
+- **本地状态接口不再向浏览器开放**：Rainmeter HTTP 接口不再返回 `Access-Control-Allow-Origin: *`——此前浏览器里任意网页都能读取本机余额/订阅数据，并可调用 `/check` 触发查询（Rainmeter 的 WebParser 不依赖 CORS）
+- **配置文件不可解析时先备份**：`config.json` 解析失败现在先复制为 `config.json.corrupt` 再回落默认值——此前只在日志留一行，此后任何保存都会覆盖原文件（2026-08-21 实际发生过一次）
+- **导出路径展开变量**：`~` 与 `%VAR%` 会被真正展开；此前 `%USERPROFILE%\balance.csv` 会生成一个字面量目录名
+- **额度百分比钳制到 0–100**：OCGo / GLM / MiniMax 的 `usage_percent` 与 `percent_remaining` 统一夹取（对齐 `docs/INTERFACES.md` §7.3）；Command Code 的「剩余可 >100%」为既定设计，保持不变
+- **阻止重复启动**：新增单实例锁（Windows 命名互斥体，其它平台 flock），二次启动给出自关闭提示后退出——此前双实例会争抢 SQLite 与托盘图标文件
+- **首次打开主界面不再卡顿（启动预热）**：首个文案带 emoji 的 `ttk.Button` 在 Windows 上需 0.6–0.9 s 初始化 emoji 字体回退（每进程一次），现已提前到启动阶段预热；同时预热一个 `-alpha 0` 的不可见窗口，把"进程内首个 Toplevel 首帧绘制"的一次性成本（实测 327 ms）也移出首开路径
+- **看板首开不再重复与过量绘制**：画布的 `<Configure>` 会在几何管理器给出真实尺寸**之前**先触发一次，叠加构建末尾的那次重绘，首开实际画了 **9 次**（其中 **6 次画在 1×1 画布上**，白造一批随即被丢弃的图元）；现尺寸未就绪即跳过，只由拿到真实尺寸的那次绘制。另把余额折线"每个数据点一个圆点"（30 天序列 = **729 个画布图元**，占该区块 98%，而悬停命中判定读的是内存列表、不依赖它们）改为等比抽样（≤48 个），三个图表区块改为每个空闲 tick 建一个，主窗改为**先映射窗口再构建 tab**。实测：绘制总耗时 106 → 59 ms、折线图元 745 → 65、真实窗口首开 461 → 322 ms
+
+### 变更
+
+- **SQLite 启用 WAL 并建立索引**：`(api_id, timestamp)` 与 `timestamp` 两种查询形态各有索引，写锁争用降低（轮询线程、Rainmeter、历史窗口与 macOS 端共用同一文件）
+
 ## Rust v1.5.0 (2026-09-16)
 
 ### 变更
@@ -22,12 +51,6 @@
 ### 变更
 
 - Command Code：不再解析 `credits.planId`，移除固定 GOAT 70 credits 常量；月度窗口不再要求账号被识别为 GOAT 套餐
-
-### Python 版（本次发布不升版本号）
-
-- Command Code 月度窗口改用同一套窗口 cap 反推逻辑，标准 `command_code` 条目也能显示月度；`command_code_goat` 条目新增 `window_pools`（14/35/70）参与插值
-- 保存设置后自动轮询不再静默停止：余额查询循环在 `finally` 中重挂载，设置保存改用 `restart_polling()` 原子取消并重启
-- OCGo 精化剩余改为 round 区间语义（`|精化 − 原始| ≤ 0.5`，与 API 取整整数一致），替代原 floor 区间
 
 ## Rust v1.4.2 (2026-09-06)
 
@@ -51,6 +74,17 @@
 
 - Rust Windows：通过命名互斥体阻止重复启动——第二实例记录日志、弹出原生提示框后退出，不再出现两个托盘图标争抢同一图标文件与数据库
 - Rust Windows：本地 Rainmeter HTTP 服务不再返回 `Access-Control-Allow-Origin: *`，浏览器中打开的任意网页无法再借 CORS 读取余额/订阅数据或触发查询（Rainmeter 的 WebParser 不依赖 CORS）
+
+## Python v2.0.2 (2026-09-02)
+
+### 新增
+
+- **Command Code 平台**（`src/platforms/command_code.py`）：`whoami`（取 orgId，失败容忍）→ `billing/credits` 双接口，展示 5h / 周 / 月三档额度（月度窗口依据 API 返回的套餐标识 `credits.planId`）
+- 注册表、托盘、Rainmeter 与设置页随之联动（平台条目、计费窗口默认值、额度展示）
+
+### 变更
+
+- `CONTRIBUTING.md` 按 v2.0.2 的 Python-Windows 架构整体重写，版本号记为 2.0.2
 
 ## Rust v1.4.1 (2026-09-01)
 
@@ -83,6 +117,33 @@
 ### 修复
 
 - 设置窗口分组标题字体渲染错误：加粗标题不再硬编码 Segoe UI（其缺少 CJK 字形，中文 UI 下走字体回退或显示豆腐块），改用统一 UI 字体族并经真实字体枚举回落（Microsoft YaHei UI → Microsoft YaHei / SimSun）；同时去掉误传的 9 像素字号，标题不再小于正文
+
+## Python v2.0.1 (2026-08-25)
+
+### 新增
+
+- **Kimi（CN / Global）与 StepFun（CN / Global）按量平台**：映射到应用三字段余额模型（充值 / 赠送 / 可用），货币随平台区域标注 CNY / USD
+
+### 变更
+
+- **包结构重构**：`src/` 拆分为 `core/`（基础设施）、`platforms/`（注册表与各平台 API 客户端）、`ui/`（全部 tkinter 界面）、`integrations/`（Rainmeter 接口）；新增共享 HTTP 层 `platforms/_http.py`；`api_client.py` 与 `settings_dialog.py` 拆解并入新结构；`credential_store.py` 由 `core/secure_settings.py` 取代
+- 循环依赖消解：`core/paths.py` 作为叶子打破 config ↔ secure_settings/storage 的环；`tray_app` ↔ `ui.main_window` 改为双向惰性导入保留
+- 审计修复（凭据读写、代理安装、日志叶子化）
+
+## Python v2.0.0 (2026-08-21)
+
+### 新增
+
+- **多平台多账号**：配置改为 `apis[]` 列表 + 首选 API，凭据按 API 分别加密存储，取代单 Key 单账号模型
+- **统一主窗**（`ui/main_window.py`）：懒构建 tabs，内容首次选中才创建并链式预构建；Tab 顺序为 看板 / 管理 / 设置 /（开发者 demo）
+- **管理页**（`ui/manage_frame.py`）：合并 API 管理与流水表，含「⭐ 设为首选」按钮，切换走托盘完整链路（图标 / 缓存 / 主窗同步）
+- **看板**（`ui/history_dialog.py`）：余额变动折线、每日消耗热力图 / 柱状、时段分布三图表块，含悬浮提示与 API 选择器
+- **MiniMax 套餐额度**支持
+
+### 变更
+
+- 架构解耦：打破循环依赖、提升惰性导入、i18n 收拢到 `core/config.py` 的 `_T` 字典、代码卫生清理
+- macOS 侧 keystore / settings 精简为复用同一套 core 模块
 
 ## Rust v1.3.2 (2026-08-14)
 

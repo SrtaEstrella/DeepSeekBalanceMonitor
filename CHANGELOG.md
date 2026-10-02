@@ -2,6 +2,35 @@
 
 All notable changes to DeepSeek Balance Monitor are documented here.
 
+## Python v2.0.3 Dev (2026-10-02)
+
+### Added
+
+- **GLM Coding Plan and OpenRouter platforms**: the former uses a semi-public monitoring endpoint (falling back to a bare key on 401), the latter requires a Management Key; the registry grows to 15 platforms.
+- **Parallel / one-hot fetch modes** (`config.fetch_mode`): one-hot queries only the preferred API and must re-arm the poll schedule before any early return, otherwise automatic polling stops.
+- **OCGo balance interpolation model**: integer weekly/monthly remaining is refined into continuous fractions (pool-ratio advance with a round-band clamp), and the dashboard chart and axis ticks follow; window labels become 周余量 / 月余量 and interpolated values display one decimal.
+
+### Fixed
+
+- **Balance semantics**: a negative bucket no longer counts as usable balance — `topped -0.10 + granted 6.00` now reads **6.00** instead of the API's raw sum of 5.90. The total is derived from the clamped buckets, and rows already stored with a negative bucket are normalised idempotently when the database is opened (only `topped<0 OR granted<0` is touched, so OpenRouter's cumulative top-up column is left alone).
+- **Statistics**: the consumption rate and the "estimated hours left" figure read the `topped` column, so a constant top-up made the rate 0 and could even produce a negative estimate (rendered as "预计可用忙时 -0.1 小时"). Both now read `total`, so the granted balance participates, and the estimate base is clamped at 0.
+- **The DeepSeek service status always reported "operational"**: the old source `status.flashcat.cloud/deepseek` is FlashDuty's OWN status page (it 302s to the root and contains no DeepSeek data), and both the component matching and the nested-incident parsing disagreed with the real page — the feature could only ever output "operational" or "unknown", never an incident. Now: dual source (the canonical `status.deepseek.com` first, FlashDuty's backend host `cn.statuspage.flashduty.com/deepseek` as fallback), a page-identity guard that reports "unknown" rather than a false "operational", proper RSC chunk decoding with bracket-matched incident extraction, API-component-only semantics, and the `docs/INTERFACES.md` section 7.4 indicator mapping (`degraded_performance` → minor, `major_outage` → critical).
+- **Rate sample floor**: the shortest interval allowed to contribute to the weighted rate is now derived from the poll interval (`max(60s, half of it)`) instead of the 0.01h (36 second) magic number — a single 46-second interval carrying a 0.08 drop used to own the whole average and extrapolate to 6.26/h.
+- **Automatic polling no longer stops silently after saving settings**: the balance-check cycle re-arms the next run in a `finally` block, and saving settings uses `restart_polling()` to cancel and restart atomically.
+- **The refined OCGo remaining now uses round-band semantics** (`|refined − raw| ≤ 0.5`, consistent with the API's rounded integer) instead of the previous floor band, which pinned the estimate above the observed integer (864 of 1258 points drifted more than 0.5).
+- **Command Code's monthly quota is derived from the window caps** (the API stopped returning `planId`), so the standard entry shows a monthly window too, the `command_code_goat` entry gains `window_pools` (14/35/70) for refining, and bonus credits no longer produce negative values.
+- **The local status interface is no longer open to browsers**: the Rainmeter HTTP endpoint no longer sends `Access-Control-Allow-Origin: *` — any page open in a browser could read the local balance/subscription data and call `/check` to trigger a query (Rainmeter's WebParser does not need CORS).
+- **An unreadable config is backed up first**: a `config.json` that fails to parse is now copied to `config.json.corrupt` before falling back to defaults — previously only a log line was written and any later save overwrote the original file (this happened for real on 2026-08-21).
+- **Export paths expand variables**: `~` and `%VAR%` are expanded; `%USERPROFILE%\balance.csv` used to create a directory literally named `%USERPROFILE%`.
+- **Quota percentages are clamped to 0–100**: `usage_percent` and `percent_remaining` for OCGo / GLM / MiniMax are clamped (aligned with `docs/INTERFACES.md` §7.3); Command Code's documented "remaining can exceed 100%" behaviour is unchanged.
+- **A second launch is refused**: a single-instance lock (Windows named mutex, flock elsewhere) shows a self-closing notice and exits — two instances used to fight over the SQLite file and the tray icon image.
+- **The first open of the main window no longer stalls (start-up warm-ups)**: the first `ttk.Button` whose label carries an emoji costs 0.6–0.9 s on Windows (emoji font fallback, once per process) and is now paid during start-up; an invisible `-alpha 0` window is mapped there too, moving the one-time "first Toplevel paint" cost (measured 327 ms) off the open path.
+- **The dashboard no longer draws repeatedly or excessively on first open**: a canvas `<Configure>` fires once *before* the geometry manager gives it its real size, and the build's own redraw runs as well — the first open drew every chart **9 times**, 6 of them into a 1×1 canvas (creating a full set of items that were then discarded). Unsized canvases are now skipped, so only the real-size redraw draws. The balance line also drew one dot per data point (**729 canvas items** for a 30-day series, 98% of that block, while hover hit-testing reads an in-memory list and never needs them) — now evenly sampled (≤48). The three chart blocks are created one per idle tick, and the main window is mapped before its tab is built. Measured: total draw time 106 → 59 ms, line items 745 → 65, real-window first open 461 → 322 ms.
+
+### Changed
+
+- **SQLite uses WAL and carries indexes**: the `(api_id, timestamp)` and `timestamp` query shapes are indexed, reducing write-lock contention (the polling thread, Rainmeter, the history window and the macOS side share one file).
+
 ## Rust v1.5.0 (2026-09-16)
 
 ### Changed
@@ -22,12 +51,6 @@ All notable changes to DeepSeek Balance Monitor are documented here.
 ### Changed
 
 - Command Code: `credits.planId` parsing and the fixed GOAT 70-credit constant are gone; the monthly window no longer requires the account to be identified as a GOAT plan
-
-### Python implementation (no version bump in this release)
-
-- Command Code monthly window uses the same window-cap inference instead of the removed `planId`, and the standard `command_code` platform entry shows the monthly window too; the `command_code_goat` entry gains `window_pools` (14/35/70) for refining
-- Automatic polling no longer stops silently after saving settings: balance-check cycles re-arm themselves in a `finally` block, and settings save calls `restart_polling()` to cancel and re-arm atomically
-- OCGo refined remaining uses round-band semantics (`|refined − raw| ≤ 0.5`, matching the API's rounded integer) instead of the previous floor band
 
 ## Rust v1.4.2 (2026-09-06)
 
@@ -51,6 +74,17 @@ All notable changes to DeepSeek Balance Monitor are documented here.
 
 - Rust Windows: launching a second copy is now blocked by a named mutex — the duplicate logs the failure, shows a native message box, and exits instead of running two tray icons racing on the same icon file and database
 - Rust Windows: the local Rainmeter HTTP server no longer sends `Access-Control-Allow-Origin: *`, so web pages open in the user's browser can no longer read balance/subscription data or trigger checks via CORS (Rainmeter's WebParser does not rely on CORS)
+
+## Python v2.0.2 (2026-09-02)
+
+### Added
+
+- **Command Code platform** (`src/platforms/command_code.py`): `whoami` (org id, failure tolerated) then `billing/credits`, showing 5h / weekly / monthly quota; the monthly window used the plan identifier returned by the API (`credits.planId`).
+- The registry, tray, Rainmeter endpoint and settings window follow (platform entry, default billing window, quota display).
+
+### Changed
+
+- `CONTRIBUTING.md` rewritten for the v2.0.2 Python-Windows architecture, with the version recorded as 2.0.2.
 
 ## Rust v1.4.1 (2026-09-01)
 
@@ -83,6 +117,33 @@ All notable changes to DeepSeek Balance Monitor are documented here.
 ### Fixed
 
 - Settings window font rendering: bold group titles no longer hardcode Segoe UI, whose missing CJK glyphs caused font fallback or tofu on the Chinese UI — the heading font now follows the unified UI family with real font enumeration (Microsoft YaHei UI, falling back to Microsoft YaHei / SimSun), and a stray 9-pixel size that rendered titles smaller than body text was dropped
+
+## Python v2.0.1 (2026-08-25)
+
+### Added
+
+- **Kimi (CN / Global) and StepFun (CN / Global) pay-as-you-go platforms**, mapped onto the app's three-field balance model (topped-up / granted / usable), with the currency following the platform region (CNY / USD).
+
+### Changed
+
+- **Package restructure**: `src/` split into `core/` (infrastructure), `platforms/` (registry and per-platform API clients), `ui/` (all tkinter UI) and `integrations/` (Rainmeter interface); shared HTTP layer `platforms/_http.py` added; `api_client.py` and `settings_dialog.py` dissolved into the new layout; `credential_store.py` replaced by `core/secure_settings.py`.
+- Circular dependencies resolved: `core/paths.py` acts as a leaf to break config ↔ secure_settings/storage; `tray_app` ↔ `ui.main_window` keep a two-way lazy import.
+- Audit fixes (credential reads and writes, proxy installation, logging leaf).
+
+## Python v2.0.0 (2026-08-21)
+
+### Added
+
+- **Multi-platform, multi-account**: the configuration becomes an `apis[]` list plus a preferred API, with credentials encrypted per API — replacing the single-key, single-account model.
+- **Unified main window** (`ui/main_window.py`): lazily built tabs, each page created on first selection, the rest pre-built one per tick; tab order is Dashboard / Manage / Settings / (developer demo).
+- **Manage page** (`ui/manage_frame.py`): merges API management with the ledger table and adds a "set as preferred" button that runs the tray's full switch chain (icon, cache, main window sync).
+- **Dashboard** (`ui/history_dialog.py`): balance trend line, daily-consumption heatmap / bar and hour-of-day distribution blocks, with hover tooltips and an API selector.
+- **MiniMax package quota** support.
+
+### Changed
+
+- Architecture decoupled: circular imports broken, lazy imports promoted, i18n consolidated into the `_T` dictionary in `core/config.py`, code hygiene.
+- macOS keystore / settings slimmed down to reuse the same core modules.
 
 ## Rust v1.3.2 (2026-08-14)
 
