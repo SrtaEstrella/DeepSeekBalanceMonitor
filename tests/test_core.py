@@ -1,6 +1,7 @@
 import tempfile
 import urllib.error
 import unittest
+import json
 import sys
 import sqlite3
 from pathlib import Path
@@ -32,6 +33,25 @@ class ApiClientTests(unittest.TestCase):
         self.assertEqual((balance["total_balance"], balance["granted_balance"],
                           balance["topped_up_balance"]), (12.5, 2.0, 10.5))
 
+    def test_fetch_balance_clamps_negative_buckets(self):
+        # topped -0.10 + granted 6.00 => 6.00 usable, NOT the raw sum 5.90.
+        # A negative bucket is not usable balance, so it clamps to 0 and the
+        # total is derived from the clamped buckets.
+        payload = {
+            "is_available": True,
+            "balance_infos": [{
+                "currency": "CNY",
+                "total_balance": "5.90", "granted_balance": "6.00",
+                "topped_up_balance": "-0.10",
+            }],
+        }
+        with patch("src.platforms.deepseek.http_get_json", return_value=payload):
+            result = api_client.fetch_balance("key")
+        balance = result["all_balances"]["CNY"]
+        self.assertEqual(balance["topped_up_balance"], 0.0)
+        self.assertEqual(balance["granted_balance"], 6.0)
+        self.assertEqual(balance["total_balance"], 6.0)
+
     def test_fetch_balance_handles_empty_and_unauthorized_responses(self):
         with patch("src.platforms.deepseek.http_get_json", return_value={"balance_infos": []}):
             with self.assertRaises(ValueError):
@@ -43,17 +63,19 @@ class ApiClientTests(unittest.TestCase):
         error.close()
 
     def test_fetch_service_status_reports_api_component_state(self):
-        # Verify the function returns a dict with expected keys on success
-        # (parsing details depend on FlashDuty RSC format, tested manually)
-        html = '{\\"name\\":\\"API\\"}'
+        # A real DeepSeek page identifies itself through its API components; the
+        # payload ships as escaped JSON inside an RSC push chunk.
+        payload = {"components": [{"name": "DeepSeek V4 Pro API服务(API Service)"}],
+                   "active_changes": []}
+        inner = json.dumps(payload, ensure_ascii=False)
+        html = "<script>self.__next_f.push([1," + json.dumps(inner, ensure_ascii=False) + "])</script>"
         mock_resp = Mock()
         mock_resp.read.return_value = html.encode("utf-8")
         mock_resp.__enter__ = Mock(return_value=mock_resp)
         mock_resp.__exit__ = Mock(return_value=False)
         with patch("urllib.request.urlopen", return_value=mock_resp):
             result = api_client.fetch_service_status()
-        self.assertIn("indicator", result)
-        self.assertIn("api_operational", result)
+        self.assertEqual(result, {"indicator": "none", "api_operational": True})
         self.assertIsInstance(result["api_operational"], bool)
 
         # Network error returns None
@@ -278,3 +300,307 @@ class RefinedRemainingTests(unittest.TestCase):
             if prev is not None:
                 self.assertLessEqual(rem, prev + 1e-9)   # never rises within period
             prev = rem
+
+
+class ConsumptionRateBalanceBaseTests(unittest.TestCase):
+    """The consumption rate / "预计可用" estimate must be built on `total`
+    (total_balance = topped_up + granted), not on `topped` alone.
+
+    Reported symptom: the DeepSeek statistics ignored the granted (赠送)
+    balance. Real data — topped sat at -0.23 all week while granted held 6.00
+    and total was 5.76 — so the estimate base became -0.23 and the UI
+    rendered "预计可用忙时 -0.1 小时" (a negative estimate); once consumption
+    is drawn from the granted bucket, a topped-only series is flat forever
+    and the rate reads 0.
+    """
+
+    def _rate(self, rows):
+        """rows: list of (timestamp, total, topped, granted). Patches the DB and config."""
+        fd, db = tempfile.mkstemp(suffix=".db")
+        import os
+        os.close(fd)
+        conn = sqlite3.connect(db)
+        conn.execute("""CREATE TABLE balance_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL,
+            currency TEXT NOT NULL, total REAL NOT NULL, topped REAL NOT NULL,
+            granted REAL NOT NULL, service_status TEXT, api_id TEXT)""")
+        for ts, total, topped, granted in rows:
+            conn.execute(
+                "INSERT INTO balance_history (timestamp, currency, total, topped, granted, api_id) "
+                "VALUES (?,?,?,?,?,?)", (ts, "CNY", total, topped, granted, "tid"))
+        conn.commit()
+        conn.close()
+
+        patch_db = patch("src.core.storage.DB_FILE", Path(db))
+        patch_db.start()
+        self.addCleanup(patch_db.stop)
+        patch_cfg = patch("src.core.storage.load_config",
+                          return_value={"interval_minutes": 10, "retention_days": 180})
+        patch_cfg.start()
+        self.addCleanup(patch_cfg.stop)
+        self.addCleanup(lambda: Path(db).unlink(missing_ok=True))
+
+        from src.core.storage import get_consumption_rate
+        return get_consumption_rate(days=7, api_id="tid")
+
+    def _ts(self, minutes_ago):
+        from datetime import datetime, timedelta
+        return (datetime.now() - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%d %H:%M:%S")
+
+    def test_estimated_hours_use_total_not_topped(self):
+        # Consumption of 0.50 CNY every 10 minutes drawn from the GRANTED
+        # bucket, exactly as the parser now stores it once negatives are
+        # clamped away (topped 0.00, granted = total). Reading `topped` alone
+        # would see a flat 0.00 series and yield no rate at all.
+        totals = [6.76, 6.26, 5.76, 5.26, 4.76, 4.26]
+        rows = [(self._ts((len(totals) - 1 - i) * 10), t, 0.0, t)
+                for i, t in enumerate(totals)]
+        result = self._rate(rows)
+        self.assertIsNotNone(result, "granted-bucket consumption must produce a rate")
+        hourly_rate, busy_hours, currency = result
+        # 2.50 CNY over 50 minutes of busy time
+        self.assertAlmostEqual(hourly_rate, 3.0, places=6)
+        self.assertEqual(currency, "CNY")
+        # base must be the LAST TOTAL (4.26), not the constant topped (-0.23)
+        self.assertAlmostEqual(busy_hours, 4.26 / 3.0, places=6)
+        self.assertGreater(busy_hours, 0.0, "estimate must never go negative here")
+
+    def test_topped_only_flat_series_still_uses_total(self):
+        # Even with no consumption at all, the base is the usable total.
+        rows = [(self._ts((2 - i) * 10), 15.0, 9.0, 6.0) for i in range(3)]
+        self.assertIsNone(self._rate(rows))
+
+    def test_negative_balance_clamps_estimate_to_zero(self):
+        # A platform may legitimately report a negative remaining total while
+        # its buckets stay non-negative (OpenRouter: total = gross credits −
+        # usage), so this clamp stays reachable after the row migration above.
+        # Real case: the DeepSeek total sat at -0.23 for a whole week.
+        totals = [-0.23, -0.73, -1.23, -1.73, -2.23, -2.73]
+        rows = [(self._ts((len(totals) - 1 - i) * 10), t, 9.0, 0.0)
+                for i, t in enumerate(totals)]
+        result = self._rate(rows)
+        self.assertIsNotNone(result)
+        hourly_rate, busy_hours, _currency = result
+        self.assertAlmostEqual(hourly_rate, 3.0, places=6)
+        self.assertEqual(busy_hours, 0.0, "negative balance must clamp to 0 hours")
+
+    def test_short_interval_does_not_dominate_rate(self):
+        # Reported case: two extra/manual checks 46 s apart carrying a 0.08
+        # drop were the only interval with a non-zero drop, so they owned the
+        # whole weighted average and extrapolated to 6.26/h. Such an interval
+        # is not a measurement span and must not qualify as a rate sample.
+        rows = [
+            (self._ts(90), 6.00, 0.0, 6.00),
+            (self._ts(80), 6.00, 0.0, 6.00),
+            (self._ts(2), 5.92, 0.0, 5.92),            # drop closes the flat run
+            (self._ts(2 - 46 / 60), 5.84, 0.0, 5.84),  # 46 s later -> 0.08 drop
+        ]
+        self.assertIsNone(self._rate(rows),
+                          "a 46-second interval must not produce a rate")
+
+    def test_poll_interval_samples_still_produce_rate(self):
+        # Positive control: samples one poll interval apart (10 min) remain
+        # valid rate measurements.
+        rows = [
+            (self._ts(30), 6.00, 0.0, 6.00),
+            (self._ts(20), 5.90, 0.0, 5.90),
+            (self._ts(10), 5.80, 0.0, 5.80),
+        ]
+        result = self._rate(rows)
+        self.assertIsNotNone(result)
+        hourly_rate, busy_hours, _currency = result
+        self.assertAlmostEqual(hourly_rate, 0.20 / (20 / 60), places=6)
+        self.assertAlmostEqual(busy_hours, 5.80 / hourly_rate, places=6)
+
+    def test_legacy_negative_rows_are_normalized_to_usable_total(self):
+        # Rows already stored with a negative bucket (pre-rule history, or rows
+        # written by the Rust builds, which persist raw API values) must be
+        # repaired on connect so statistics see the usable total.
+        fd, db = tempfile.mkstemp(suffix=".db")
+        import os
+        os.close(fd)
+        patch_db = patch("src.core.storage.DB_FILE", Path(db))
+        patch_db.start()
+        self.addCleanup(patch_db.stop)
+        patch_cfg = patch("src.core.storage.load_config",
+                          return_value={"interval_minutes": 10, "retention_days": 180})
+        patch_cfg.start()
+        self.addCleanup(patch_cfg.stop)
+        self.addCleanup(lambda: Path(db).unlink(missing_ok=True))
+
+        from src.core.storage import _connect
+        _connect().close()                       # create the schema
+
+        raw = sqlite3.connect(db)
+        for ts, total, topped, granted in ((self._ts(20), -0.23, -0.23, 0.0),
+                                           (self._ts(10), 5.76, -0.23, 6.0)):
+            raw.execute(
+                "INSERT INTO balance_history (timestamp, currency, total, topped, granted, api_id) "
+                "VALUES (?,?,?,?,?,?)", (ts, "CNY", total, topped, granted, "tid"))
+        raw.commit()
+        raw.close()
+
+        _connect().close()                       # migration runs here
+        raw = sqlite3.connect(db)
+        rows = raw.execute("SELECT total, topped, granted FROM balance_history "
+                           "ORDER BY timestamp ASC").fetchall()
+        raw.close()
+        self.assertEqual(rows[0], (0.0, 0.0, 0.0))
+        self.assertEqual(rows[1], (6.0, 0.0, 6.0),
+                         "topped -0.23 + granted 6.00 must become 6.00 usable, not 5.76")
+
+
+class ServiceStatusParsingTests(unittest.TestCase):
+    """The DeepSeek status parse was structurally unable to report an incident.
+
+    Reported symptom: healthy showed 服务正常, a real outage showed
+    "服务状态未知", and an incident state was never reported. Three causes:
+
+    1. the source URL pointed at status.flashcat.cloud/deepseek, which is
+       FlashDuty's OWN status page (no DeepSeek data), yet the parser still
+       answered "operational";
+    2. component matching looked for names starting with API|Web|网页|APP|对话,
+       which never matches the real API components
+       ("DeepSeek V4 Pro API服务(API Service)");
+    3. the incident extraction regex `\\[[^\\]]*\\]` cannot match a nested
+       affected_components array — it truncated the JSON, json.loads raised, and
+       the blanket except returned None (= 服务状态未知) exactly when a change
+       was active. Only "fine" and "unknown" were reachable.
+    """
+
+    API = "DeepSeek V4 Pro API服务(API Service)"
+    FLASH = "DeepSeek V4.1 Flash API服务(API Service)"
+    CHAT = "对话服务(Chatservice)"
+    UPLOAD = "上传文件服务(File Upload Service)"
+
+    @staticmethod
+    def _page(payload):
+        """Build a page in the real shape: escaped JSON inside an RSC push chunk."""
+        import json as _json
+        inner = _json.dumps(payload, ensure_ascii=False)
+        return ("<script>self.__next_f.push([1,"
+                + _json.dumps(inner, ensure_ascii=False) + "])</script>")
+
+    def _parse(self, payload):
+        from src.platforms.deepseek import parse_status_page
+        return parse_status_page(self._page(payload))
+
+    def test_healthy_page_reports_operational(self):
+        result = self._parse({"components": [{"name": self.API}, {"name": self.CHAT}],
+                              "active_changes": []})
+        self.assertEqual(result, {"indicator": "none", "api_operational": True})
+
+    def test_active_incident_with_nested_components_is_reported(self):
+        # The exact shape that used to raise inside json.loads.
+        result = self._parse({
+            "components": [{"name": self.API}, {"name": self.FLASH}, {"name": self.CHAT}],
+            "active_changes": [{
+                "change_id": 1, "type": "incident", "status": "investigating",
+                "title": "DeepSeek 网页/API 性能下降",
+                "affected_components": [
+                    {"name": self.API, "status": "degraded"},
+                    {"name": self.FLASH, "status": "operational"},
+                    {"name": self.CHAT, "status": "degraded"},
+                ],
+            }],
+        })
+        self.assertEqual(result, {"indicator": "minor", "api_operational": False})
+
+    def test_worst_affected_api_component_wins(self):
+        result = self._parse({
+            "components": [{"name": self.API}, {"name": self.FLASH}],
+            "active_changes": [{
+                "change_id": 2, "type": "incident", "status": "monitoring",
+                "affected_components": [{"name": self.API, "status": "degraded"},
+                                        {"name": self.FLASH, "status": "full_outage"}],
+            }],
+        })
+        self.assertEqual(result, {"indicator": "critical", "api_operational": False})
+
+    def test_non_api_component_does_not_flag_the_api(self):
+        # Chosen semantics: only API-type components drive the API status.
+        result = self._parse({
+            "components": [{"name": self.API}, {"name": self.UPLOAD}],
+            "active_changes": [{
+                "change_id": 3, "type": "incident", "status": "investigating",
+                "affected_components": [{"name": self.UPLOAD, "status": "partial_outage"}],
+            }],
+        })
+        self.assertEqual(result, {"indicator": "none", "api_operational": True})
+
+    def test_resolved_incident_does_not_raise_the_indicator(self):
+        result = self._parse({
+            "components": [{"name": self.API}],
+            "active_changes": [{
+                "change_id": 4, "type": "incident", "status": "resolved",
+                "affected_components": [{"name": self.API, "status": "operational"}],
+            }],
+        })
+        self.assertEqual(result, {"indicator": "none", "api_operational": True})
+
+    def test_contract_mapping_covers_every_documented_status(self):
+        # docs/INTERFACES.md §7.4 (locked) normalizes each vendor status string
+        # onto the shared indicator vocabulary. degraded_performance and
+        # major_outage were missing from the table: the former only worked by
+        # falling through to the unknown-severity path, the latter would have
+        # reported a full outage as "minor".
+        for raw, indicator in (("degraded", "minor"),
+                               ("degraded_performance", "minor"),
+                               ("partial_outage", "major"),
+                               ("full_outage", "critical"),
+                               ("major_outage", "critical"),
+                               ("under_maintenance", "maintenance")):
+            result = self._parse({
+                "components": [{"name": self.API}],
+                "active_changes": [{
+                    "change_id": 9, "type": "incident", "status": "investigating",
+                    "affected_components": [{"name": self.API, "status": raw}],
+                }],
+            })
+            self.assertIsNotNone(result, raw)
+            self.assertEqual(result["indicator"], indicator, raw)
+            self.assertEqual(result["api_operational"], indicator == "none", raw)
+
+    def test_foreign_page_is_unknown_not_operational(self):
+        # FlashDuty serves its own status page for unknown paths; answering
+        # "operational" for it is what hid every DeepSeek incident.
+        foreign = ("<script>self.__next_f.push([1,"
+                   + json.dumps(json.dumps({"components": [
+                       {"name": "Web Console"}, {"name": "Webhooks"}, {"name": "Web Chat"}],
+                       "active_changes": []}), ensure_ascii=False)
+                   + "])</script>")
+        from src.platforms.deepseek import parse_status_page
+        self.assertIsNone(parse_status_page(foreign))
+
+    def test_fetch_falls_back_to_the_backend_host(self):
+        from src.platforms import deepseek as status_mod
+        page = self._page({"components": [{"name": self.API}], "active_changes": []})
+
+        def fake_urlopen(req, timeout=None):
+            self.assertTrue(req.full_url.startswith("https://status.deepseek.com"))
+            raise urllib.error.URLError("tls handshake reset")
+
+        def fake_urlopen_ok(req, timeout=None):
+            self.assertIn("flashduty.com", req.full_url)
+            resp = Mock()
+            resp.read.return_value = page.encode("utf-8")
+            resp.__enter__ = Mock(return_value=resp)
+            resp.__exit__ = Mock(return_value=False)
+            return resp
+
+        calls = []
+
+        def dispatch(req, timeout=None):
+            calls.append(req.full_url)
+            return fake_urlopen(req, timeout) if len(calls) == 1 else fake_urlopen_ok(req, timeout)
+
+        with patch("urllib.request.urlopen", side_effect=dispatch):
+            result = status_mod.fetch_service_status()
+        self.assertEqual(result, {"indicator": "none", "api_operational": True})
+        self.assertEqual(len(calls), 2, "must fall back to the second source")
+
+    def test_fetch_returns_none_when_every_source_fails(self):
+        from src.platforms import deepseek as status_mod
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("down")):
+            self.assertIsNone(status_mod.fetch_service_status())
+

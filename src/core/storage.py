@@ -43,6 +43,25 @@ def _connect():
                 conn.commit()
     except Exception:
         pass
+    # Normalize stored rows that carry a negative balance bucket: a negative
+    # topped/granted is not usable balance, so clamp each bucket at 0 and
+    # re-derive total from the clamped buckets (topped -0.10 + granted 6.00 =>
+    # 6.00, not the raw sum 5.90). Rows written before this rule — and rows
+    # written by the Rust builds, which persist raw API values — are repaired
+    # here so the consumption-rate statistics agree with the display. The WHERE
+    # clause touches nothing else: platforms whose components are never
+    # negative (e.g. OpenRouter, where topped_up is the historical gross
+    # top-up, not remaining cash) are left completely untouched.
+    try:
+        conn.execute(
+            "UPDATE balance_history SET "
+            "total = MAX(0, topped) + MAX(0, granted), "
+            "topped = MAX(0, topped), "
+            "granted = MAX(0, granted) "
+            "WHERE topped < 0 OR granted < 0"
+        )
+    except Exception:
+        pass
     conn.commit()
     return conn
 
@@ -547,6 +566,9 @@ def get_consumption_rate(days=7, api_id: str | None = None, billing_period: str 
 def _get_consumption_rate_for_days(days=7, _interval_min=None, api_id: str | None = None, billing_period: str | None = None):
     """Busy-hour slicing: split on top-ups, long idle gaps, and long flat periods.
     Only "busy" intervals contribute to the weighted hourly rate. Filter by api_id if given.
+    The rate and the remaining-quota base both come from `total` (total_balance =
+    topped_up + granted), so the granted (赠送) balance participates in the
+    statistics; `topped` alone would ignore consumption drawn from it.
     If billing_period is set, read package_history usage%% instead (negated so that
     usage rises count as consumption and quota resets act as top-ups)."""
     try:
@@ -582,14 +604,20 @@ def _get_consumption_rate_for_days(days=7, _interval_min=None, api_id: str | Non
             return avg_hourly, busy_hours, currency
 
         conn = _connect()
+        # Read `total` (total_balance = topped_up + granted), NOT `topped`.
+        # Consumption can be drawn from the granted (赠送) bucket, so a
+        # topped-only series stays flat — or negative — while the real usable
+        # balance drops: the rate then reads 0 and the estimate base
+        # (parsed[-1][2]) renders a meaningless negative "预计可用". Granted
+        # arrivals are increases and get sliced as top-ups, same as a recharge.
         if api_id:
             cur = conn.execute(
-                "SELECT timestamp, currency, topped FROM balance_history WHERE timestamp >= datetime('now', ?) AND api_id=? ORDER BY timestamp ASC",
+                "SELECT timestamp, currency, total FROM balance_history WHERE timestamp >= datetime('now', ?) AND api_id=? ORDER BY timestamp ASC",
                 (f"-{days} days", api_id),
             )
         else:
             cur = conn.execute(
-                "SELECT timestamp, currency, topped FROM balance_history WHERE timestamp >= datetime('now', ?) ORDER BY timestamp ASC",
+                "SELECT timestamp, currency, total FROM balance_history WHERE timestamp >= datetime('now', ?) ORDER BY timestamp ASC",
                 (f"-{days} days",),
             )
         rows = cur.fetchall()
@@ -603,6 +631,15 @@ def _get_consumption_rate_for_days(days=7, _interval_min=None, api_id: str | Non
             _interval_min = int(load_config().get("interval_minutes", 10))
         m_sec = max(30, 2 * _interval_min) * 60
 
+        # Minimum length for a rate sample. Intervals shorter than half the
+        # poll interval (never under a minute) come from extra or manual
+        # checks, not from a real measurement span: extrapolating a small
+        # balance delta over seconds yields an absurd hourly rate, and when
+        # such an interval is the only one carrying a drop it owns the whole
+        # weighted average. The previous floor was 0.01 h (36 s), which let a
+        # single 46-second interval with a 0.08 drop report 6.26/h by itself.
+        min_sample_h = max(60.0, 0.5 * _interval_min * 60) / 3600.0
+
         intervals = _slice_busy_intervals(parsed, m_sec)
 
         total_weight = 0.0
@@ -611,7 +648,7 @@ def _get_consumption_rate_for_days(days=7, _interval_min=None, api_id: str | Non
             if ev >= sv:
                 continue
             delta_h = (et - st).total_seconds() / 3600
-            if delta_h < 0.01:
+            if delta_h < min_sample_h:
                 continue
             hourly_rate = (sv - ev) / delta_h
             weighted_sum += hourly_rate * delta_h
@@ -622,7 +659,11 @@ def _get_consumption_rate_for_days(days=7, _interval_min=None, api_id: str | Non
         avg_hourly = weighted_sum / total_weight
         if avg_hourly <= 0:
             return None
-        busy_hours = parsed[-1][2] / avg_hourly
+        # Clamp the remaining-quota base at 0: a non-positive balance (account
+        # in arrears, e.g. total -0.23 before a grant arrives) would otherwise
+        # yield a negative "预计可用" — meaningless as an hours-remaining figure.
+        # Same convention as the package path above.
+        busy_hours = max(0.0, parsed[-1][2]) / avg_hourly
         return avg_hourly, busy_hours, currency
     except Exception as e:
         log(f"Failed to compute consumption rate: {e}")
