@@ -42,7 +42,7 @@
 ```json
 {
   "version": 2,
-  "provider": { "name": "dsmon2", "version": "2.1.2" },
+  "provider": { "name": "dsmon2", "version": "2.2.0" },
   "generated_at": "2026-09-15 10:42:00",
   "lang": "zh",
   "checking": false,
@@ -57,6 +57,7 @@
                      "topped_up_balance": 10.0, "granted_balance": 2.34 }],
       "rate": { "hourly_rate": 0.42, "busy_hours_left": 291.5, "currency": "CNY" },
       "windows": [],
+      "service_status": "none",
       "series": [{ "t": 1757900000, "v": 12.34 }],
       "daily": [{ "date": "2026-09-14", "used": 3.2, "weekday": 0 }]
     }
@@ -82,6 +83,7 @@
 `granted_balance`）；`package` 平台通常为空 |
 | `platforms[].rate` | 对象｜null | `hourly_rate`（每小时消耗，**固定 7 天口径**）+ `busy_hours_left`（预计可用小时数）+ `currency` |
 | `platforms[].windows[]` | 数组 | 额度窗口：`name_key`（i18n 键）、`usage_percent`、`reset_in_sec` |
+| `platforms[].service_status` | 字符串｜缺省 | 平台自己的状态页指示（取值见 §7.4）。**只有有状态页的平台携带**（DeepSeek、MiniMax），其余省略；客户端按缺失画「无状态行」 |
 | `platforms[].series[]` | 数组 | **余额曲线**，按 `days` 截取，**降采样到 ≤240 点**；`t` 秒级时间戳、`v` 总余额 |
 | `platforms[].daily[]` | 数组 | 每日用量（热力图）：`date`（`YYYY-MM-DD`）、`used`、`weekday`（0=周一，客户端据此排版，仍不需要日期库） |
 
@@ -119,10 +121,16 @@
 |---|---|---|---|---|
 | `interval_minutes` | 整数 | 10 | 1–1440 | 轮询间隔 |
 | `threshold_yuan` | 浮点 | 1.0 | ≤10000 | 低余额告警阈值 |
+| `threshold_package_percent` | 浮点 | 10 | 0–100 | 套餐主窗口剩余百分比低额线（低于即图标转低额） |
 | `ui_language` | 字符串 | `zh` | `zh` / `en` | 界面与通知语言；**小工具也读它** |
 | `auto_start` | 布尔 | false | — | 开机自启 |
 | `alert_mode` | 字符串 | `once` | `once` / `always` / `never` | 低余额告警频率 |
 | `api_alert_enabled` | 布尔 | true | — | 服务状态异常是否告警 |
+| `peak_alert_enabled` | 布尔 | false | — | DeepSeek 峰谷切换是否提醒 |
+| `brisk_threshold_yuan` | 浮点 | 0 | 0 = 关 | 余额单日消耗提醒线 |
+| `brisk_package_percent` | 浮点 | 0 | 0 = 关，≤100 | 套餐单日消耗提醒线（百分点） |
+| `quota_alert_enabled` | 布尔 | true | — | 套餐额度「按当前速度会在重置前用完」是否告警 |
+| `update_check_enabled` | 布尔 | true | — | 每天查一次发布页，有新版本时提示 |
 | `retention_days` | 整数 | 30 | 1–3650 | 历史保留天数（裁剪与日志共用） |
 | `export_path` | 字符串 | 空 | 目录路径 | CSV 导出目录，空=家目录 |
 | `http_proxy` | 字符串 | 空 | `host:port` | 代理地址 |
@@ -309,6 +317,8 @@ secure_settings(key PRIMARY KEY, value BLOB, updated_at)
 | 项 | 规则 |
 |---|---|
 | 低余额告警 | 首选币种余额 `< threshold_yuan` 时触发；`alert_mode`：`once` 每次跌破只报一次、`always` 每次轮询都报、`never` 不报 |
+| 套餐低额 | 任一计划的主窗口（monthly → weekly → 5h 取先有者）剩余 `< threshold_package_percent` 时图标转低额；**不发通知**（与 1.x 相同：1.x 的 `should_alert` 只查余额） |
+| 套餐单日过快 | `brisk_package_percent` > 0 且某计划当日窗口消耗（正增量累加）≥ 该线时，图标转「过快」并按日提醒一次 |
 | 服务异常告警 | `api_alert_enabled` 为真且服务状态非 `none` 时触发 |
 | Linux 通道 | `org.freedesktop.Notifications`（zbus 直连；没有通知守护就静默） |
 | Windows 通道 | 托盘气泡（`Shell_NotifyIconW` + `NIF_INFO`） |
