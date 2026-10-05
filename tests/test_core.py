@@ -730,3 +730,134 @@ class ServiceStatusParsingTests(unittest.TestCase):
         with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("down")):
             self.assertIsNone(status_mod.fetch_service_status())
 
+
+
+class WidgetContractTests(unittest.TestCase):
+    """The dsmon2-widget contract (docs/INTERFACES.md §1) as the Python build
+    serves it: payload shape, `days` handling, and the HTTP surface."""
+
+    def _app(self, apis=None, preferred="", language="zh"):
+        app = AppState()
+        app.config = {**DEFAULT_CONFIG, "apis": apis or [],
+                      "preferred_api_id": preferred, "language": language}
+        return app
+
+    def _patched_app(self, apis, preferred="", series=None, today=None):
+        """The widget server with its data sources stubbed: keys exist for
+        every API, the curve comes from `series`, the day figure from
+        `today`. Returns (exit-stack, app, mocks)."""
+        import contextlib
+        from src.integrations import widget_server
+
+        app = self._app(apis=apis, preferred=preferred)
+        stack = contextlib.ExitStack()
+        mocks = {}
+        for name, stub in [
+            ("read_api_key_for_id", Mock(return_value="key")),
+            ("get_balance_series", Mock(return_value=series or [])),
+            ("get_consumption_rate", Mock(return_value=None)),
+            ("get_today_total_spend", Mock(return_value=today)),
+            ("get_package_daily_usage", Mock(return_value=[])),
+        ]:
+            mocks[name] = stack.enter_context(patch.object(widget_server, name, stub))
+        return stack, app, mocks
+
+    def test_payload_basics_with_no_apis(self):
+        from src.integrations import widget_server
+        app = self._app()
+        payload = widget_server.build_payload(app)
+        self.assertEqual(payload["version"], 2)
+        self.assertEqual(payload["provider"]["name"], "deepseek-balance-monitor")
+        self.assertEqual(payload["lang"], "zh")
+        self.assertEqual(payload["platforms"], [])
+        self.assertIsNone(payload["today_spend"])
+        self.assertIn("generated_at", payload)
+
+    def test_days_is_validated(self):
+        from src.integrations import widget_server
+        self.assertEqual(widget_server._parse_days("days=30"), 30)
+        self.assertEqual(widget_server._parse_days("days=1"), 1)
+        self.assertEqual(widget_server._parse_days("days=5"), 7)
+        self.assertEqual(widget_server._parse_days(""), 7)
+
+    def test_only_configured_platforms_appear(self):
+        from src.integrations import widget_server
+        stack, app, mocks = self._patched_app(
+            apis=[
+                {"id": "a1", "platform": "deepseek", "mode": "payg"},
+                {"id": "a2", "platform": "opencode_go", "mode": "package"},
+            ],
+            preferred="a1",
+        )
+        mocks["read_api_key_for_id"].side_effect = (
+            lambda api_id: "key" if api_id == "a1" else None)
+        with stack:
+            payload = widget_server.build_payload(app)
+
+        self.assertEqual([p["key"] for p in payload["platforms"]], ["deepseek"])
+        entry = payload["platforms"][0]
+        self.assertEqual(entry["display"], "DeepSeek")
+        self.assertEqual(entry["kind"], "payg")
+        self.assertEqual(entry["balances"], [])
+
+    def test_series_is_thinned_to_240_points_keeping_the_last(self):
+        from src.integrations import widget_server
+        points = [(f"2026-01-01 10:{i % 60:02d}:{i % 60:02d}", float(i))
+                  for i in range(1000)]
+        stack, app, _ = self._patched_app(
+            apis=[{"id": "a1", "platform": "deepseek", "mode": "payg"}],
+            preferred="a1", series=points,
+        )
+        with stack:
+            payload = widget_server.build_payload(app, days=1)
+        series = payload["platforms"][0]["series"]
+        self.assertLessEqual(len(series), 240)
+        self.assertEqual(series[-1]["v"], 999.0)
+
+    def test_spend_is_reported_for_the_preferred_balance_account(self):
+        from src.integrations import widget_server
+        stack, app, _ = self._patched_app(
+            apis=[{"id": "a1", "platform": "deepseek", "mode": "payg"}],
+            preferred="a1", today=("CNY", 12.5),
+        )
+        with stack:
+            payload = widget_server.build_payload(app)
+        self.assertEqual(payload["today_spend"],
+                         {"platform": "deepseek", "currency": "CNY", "amount": 12.5})
+
+    def test_http_surface(self):
+        import http.client
+        import threading
+        from src.integrations import widget_server
+
+        app = self._app()
+        server = widget_server._make_server(app, 0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            port = server.server_address[1]
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+
+            conn.request("GET", "/widget-status")
+            response = conn.getresponse()
+            body = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.getheader("Cache-Control"), "no-store")
+            self.assertEqual(response.getheader("Connection"), "close")
+            self.assertTrue(response.getheader("Content-Type").startswith("application/json"))
+            self.assertEqual(body["version"], 2)
+
+            # /check answers with the current snapshot too (no poll is
+            # registered here, so it only reads).
+            conn.request("GET", "/check")
+            self.assertEqual(conn.getresponse().status, 200)
+
+            conn.request("GET", "/nope")
+            self.assertEqual(conn.getresponse().status, 404)
+
+            conn.request("POST", "/widget-status")
+            self.assertEqual(conn.getresponse().status, 405)
+            conn.close()
+        finally:
+            server.shutdown()
+            server.server_close()

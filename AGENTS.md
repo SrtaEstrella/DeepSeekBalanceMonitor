@@ -26,6 +26,9 @@
 - `get_consumption_rate()` 返回 `hourly_rate`（忙时小时速率），非旧版 `daily_rate`
 - API Key 设为 `demo` 会触发 rust-linux 演示模式（`src/demo.rs`）
 - Python 版 tkinter + pystray 双事件循环，改动时避免死锁
+- **桌面小工具（dsmon2-widget，Rust 2.x）从本地接口 18964 读数据**：载荷契约见 `docs/INTERFACES.md` §1，
+  实现见 `src/integrations/widget_server.py`（常开、无开关，绑定失败只记日志）；Rainmeter 接口 17654 并存，
+  旧版小工具退役后再移除。**改动统计口径或载荷字段时，同步 `docs/INTERFACES.md` 并评估两处小工具展示**
 
 ## 发布触发
 

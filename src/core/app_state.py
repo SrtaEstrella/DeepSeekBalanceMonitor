@@ -33,6 +33,7 @@ class AppState:
         self._check_generation = 0  # incremented on API switch to discard stale results
         self._api_cache = {}  # {api_id: {"balances": {...}, "package_data": {...}, "service_status": {...}, "error": str}}
         self._poll_cb = None  # auto-poll entry callback, registered by the tray app
+        self.checking = False  # a poll in flight (the widget payload's field)
 
     @property
     def lang(self):

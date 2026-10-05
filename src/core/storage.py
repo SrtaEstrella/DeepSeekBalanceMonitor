@@ -4,7 +4,7 @@ Balance history storage — SQLite-backed, for spend-rate / trend analysis.
 import csv
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from src.core.paths import DB_FILE, CONFIG_DIR, LOG_FILE, log
 from src.core.config import load_config
@@ -452,6 +452,98 @@ def get_today_spend(api_id: str, mode: str = "payg", billing_period: str | None 
     except Exception as e:
         log(f"Failed to compute today spend: {e}")
         return 0.0
+
+
+# ─── Widget payload queries (the dsmon2-widget contract, INTERFACES §1) ───
+
+def get_balance_series(api_id: str, days: int) -> list:
+    """Ascending (timestamp, total) pairs within `days`, for the widget curve.
+
+    The 2.x build reads the same rows here (`total`, not `topped`); the caller
+    thins the series before sending it.
+    """
+    try:
+        conn = _connect()
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        cur = conn.execute(
+            "SELECT timestamp, total FROM balance_history "
+            "WHERE api_id=? AND timestamp>=? ORDER BY timestamp ASC",
+            (api_id or "", cutoff),
+        )
+        rows = cur.fetchall()
+        conn.close()
+        return [(r[0], r[1]) for r in rows]
+    except Exception as e:
+        log(f"Failed to read balance series: {e}")
+        return []
+
+
+def get_package_daily_usage(api_id: str, days: int) -> list:
+    """Per-day consumption of the monthly window, for the widget's heat map.
+
+    The last reading of each day stands for that day and the difference to the
+    previous day is what it burned; a drop means the allowance was renewed, so
+    that day is skipped rather than recorded as negative usage. The shape
+    matches the 2.x build's `daily_usage`.
+    """
+    try:
+        conn = _connect_package()
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        cur = conn.execute(
+            "SELECT timestamp, monthly_percent FROM package_history "
+            "WHERE api_id=? AND timestamp>=? AND monthly_percent IS NOT NULL "
+            "ORDER BY timestamp ASC",
+            (api_id or "", cutoff),
+        )
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        log(f"Failed to read package daily usage: {e}")
+        return []
+
+    last_per_day = {}
+    for ts, used in rows:
+        last_per_day[ts[:10]] = used  # rows are ordered; the last one wins
+
+    usage = []
+    previous = None
+    for day in sorted(last_per_day):
+        if previous is not None:
+            delta = last_per_day[day] - previous
+            if delta >= 0:
+                usage.append((day, round(delta, 2)))
+        previous = last_per_day[day]
+    return usage
+
+
+def get_today_total_spend(api_id: str) -> tuple | None:
+    """Today's consumption from the `total` column: the day's positive drops
+    added up. Returns (currency, amount) or None when there is nothing to
+    compare — the reading the 2.x build reports as `today_spend`."""
+    try:
+        conn = _connect()
+        midnight = datetime.now().strftime("%Y-%m-%d 00:00:00")
+        cur = conn.execute(
+            "SELECT currency, total FROM balance_history "
+            "WHERE api_id=? AND timestamp>=? ORDER BY timestamp ASC",
+            (api_id or "", midnight),
+        )
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        log(f"Failed to compute today's total spend: {e}")
+        return None
+
+    if len(rows) < 2 or rows[0][0] != rows[-1][0]:
+        return None
+    spend = 0.0
+    for i in range(1, len(rows)):
+        drop = rows[i - 1][1] - rows[i][1]
+        if drop > 0:
+            spend += drop
+    if spend <= 0:
+        return None
+    return rows[-1][0], round(spend, 2)
 
 
 def get_history_page(limit: int = 100, offset: int = 0, api_id: str | None = None):
