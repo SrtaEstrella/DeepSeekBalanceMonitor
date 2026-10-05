@@ -78,13 +78,13 @@ Rust Linux 版本限定：
 
 ### 直接下载
 
-从 [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases) 下载最新文件。Python 打包版使用 `DeepSeekBalanceMonitor.exe`，Rust Windows 版使用 `deepseek-balance-monitor-*-windows-*.exe`，Linux 完整包使用 `deepseek-balance-monitor-*-linux-x86_64.tar.gz`，独立 Plasma 小组件使用 `deepseek-balance-monitor-*-plasmoid.plasmoid`。发布版无需 Python 环境。
+从 [Releases](https://github.com/SrtaEstrella/DeepSeekBalanceMonitor/releases) 下载最新文件。Python 打包版使用 `DeepSeekBalanceMonitor.exe`，Rust Windows 版使用 `deepseek-balance-monitor-*-windows-*.exe`，Linux 完整包使用 `deepseek-balance-monitor-*-linux-x86_64.tar.gz`，独立 Plasma 小组件使用 `deepseek-balance-monitor-*-plasmoid.plasmoid`。发布版无需 Python 环境。
 
 ### 可选 Plasma 小组件（Linux）
 
 Plasma 小组件是可选功能，需要 KDE Plasma 6。它从本机 `dsmon` 读取状态，不会直接接收 API Key。
 
-1. 从 [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases) 下载 `deepseek-balance-monitor-*-linux-x86_64.tar.gz`。
+1. 从 [Releases](https://github.com/SrtaEstrella/DeepSeekBalanceMonitor/releases) 下载 `deepseek-balance-monitor-*-linux-x86_64.tar.gz`。
 2. 解压并运行安装脚本：
 
    ```bash
@@ -107,7 +107,7 @@ Rainmeter 桌面小工具是可选功能。它通过本地地址 `127.0.0.1:1765
 
 1. 从 [rainmeter.net](https://www.rainmeter.net/) 下载并安装 Rainmeter。
 2. 运行任意 Windows 版本（Python 或 Rust）——本地状态接口会自动启动。
-3. 从 [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases) 下载 `deepseek-balance-monitor-*-rainmeter.rmskin`。
+3. 从 [Releases](https://github.com/SrtaEstrella/DeepSeekBalanceMonitor/releases) 下载 `deepseek-balance-monitor-*-rainmeter.rmskin`。
 4. 双击 `.rmskin` 安装皮肤。
 5. 在 Rainmeter 中加载 `DeepSeekBalanceMonitor\DeepSeekBalanceMonitor.ini`（英文版用 `DeepSeekBalanceMonitor.en.ini`）。
 

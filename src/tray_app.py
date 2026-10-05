@@ -22,6 +22,7 @@ from src.platforms.minimax import fetch_minimax_service_status
 from src.ui.icon_renderer import create_icon_image
 from src.core.app_state import AppState
 from src.integrations.rainmeter_server import start_rainmeter_server
+from src.integrations.widget_server import start_widget_server
 from src.core.storage import save_balance_record, prune_old_data, get_consumption_rate, save_package_record, get_package_history_page
 
 _DEMO = {
@@ -402,10 +403,12 @@ def do_balance_check(app: AppState):
     (settings save) must re-arm it via AppState.restart_polling()."""
     cb = getattr(app, "_poll_cb", None) or (lambda a=app: do_balance_check(a))
     try:
+        app.checking = True
         _do_balance_check_once(app)
     except Exception as e:
         log(f"Balance check cycle failed: {e}")
     finally:
+        app.checking = False
         if app.running:
             interval_sec = int(app.config.get("interval_minutes", 10)) * 60
             app.schedule_next_check(cb, interval_sec)
@@ -942,6 +945,11 @@ def main():
     else:
         retention = int(app.config.get("retention_days", 180))
         prune_old_data(retention)
+
+    # The dsmon2-widget interface is always on while the application runs
+    # (INTERFACES §1: no switch of its own); the Rainmeter one keeps its
+    # switch for the older widget, which is retired later.
+    start_widget_server(app)
 
     if app.config.get("rainmeter_enabled", True):
         start_rainmeter_server(app)
