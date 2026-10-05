@@ -77,13 +77,13 @@ Rust Linux-specific:
 
 ### Direct Download
 
-Grab the latest files from [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases). Python builds use `DeepSeekBalanceMonitor.exe`, Rust Windows builds use `deepseek-balance-monitor-*-windows-*.exe`, full Linux packages use `deepseek-balance-monitor-*-linux-x86_64.tar.gz`, and standalone Plasma widgets use `deepseek-balance-monitor-*-plasmoid.plasmoid`. Release builds do not require Python.
+Grab the latest files from [Releases](https://github.com/SrtaEstrella/DeepSeekBalanceMonitor/releases). Python builds use `DeepSeekBalanceMonitor.exe`, Rust Windows builds use `deepseek-balance-monitor-*-windows-*.exe`, full Linux packages use `deepseek-balance-monitor-*-linux-x86_64.tar.gz`, and standalone Plasma widgets use `deepseek-balance-monitor-*-plasmoid.plasmoid`. Release builds do not require Python.
 
 ### Optional Plasma Widget (Linux)
 
 The Plasma widget is optional and requires KDE Plasma 6. It reads status from a local `dsmon` instance and does not directly receive your API key.
 
-1. Download `deepseek-balance-monitor-*-linux-x86_64.tar.gz` from [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases).
+1. Download `deepseek-balance-monitor-*-linux-x86_64.tar.gz` from [Releases](https://github.com/SrtaEstrella/DeepSeekBalanceMonitor/releases).
 2. Extract and run the install script:
 
    ```bash
@@ -106,7 +106,7 @@ The Rainmeter desktop widget is optional. It reads local status from a running D
 
 1. Install Rainmeter from [rainmeter.net](https://www.rainmeter.net/).
 2. Run any Windows build (Python or Rust) — the local status interface starts automatically.
-3. Download `deepseek-balance-monitor-*-rainmeter.rmskin` from [Releases](https://github.com/wenyinos/DeepSeekBalanceMonitor/releases).
+3. Download `deepseek-balance-monitor-*-rainmeter.rmskin` from [Releases](https://github.com/SrtaEstrella/DeepSeekBalanceMonitor/releases).
 4. Double-click the `.rmskin` file and install the skin.
 5. In Rainmeter, load `DeepSeekBalanceMonitor\DeepSeekBalanceMonitor.ini` (or `DeepSeekBalanceMonitor.en.ini` for English).
 
