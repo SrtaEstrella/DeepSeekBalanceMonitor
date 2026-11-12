@@ -4,8 +4,6 @@ All notable changes to DeepSeek Balance Monitor are documented here.
 
 ## Python v2.4.0 (2026-11-12)
 
-Published as a pre-release.
-
 The Python build catches up with the Rust 2.4 account-usability release while
 keeping its own model: `apis[]`, a preferred account, one-hot fetching and the
 Rainmeter 17654 interface stay exactly as they were.
