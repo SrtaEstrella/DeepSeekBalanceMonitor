@@ -2,6 +2,50 @@
 
 All notable changes to DeepSeek Balance Monitor are documented here.
 
+## Python v2.4.0 (2026-11-12)
+
+The Python build catches up with the Rust 2.4 account-usability release while
+keeping its own model: `apis[]`, a preferred account, one-hot fetching and the
+Rainmeter 17654 interface stay exactly as they were.
+
+### Added
+
+- **Overview page**: totals per currency and one row per account, risk first;
+  a row opens the account in Manage.
+- **Subscriptions page**: one card per plan account with its windows,
+  remaining share and reset countdown.
+- **Account-level lines and budgets**: each account can carry its own alert
+  line (amount for PAYG, remaining percent for a plan), a monthly budget and an
+  alert switch; the preferred account's own line overrides the global one.
+- **Quiet hours**: every notification is silent inside the window (23 → 7
+  crosses midnight); the judgement is skipped rather than consumed, so nothing
+  is replayed afterwards.
+- **Key test and duplicate check**: the account form tests a key before it is
+  saved and refuses a key already stored under another account.
+- **Failure handling**: consecutive failures are counted, announced once at
+  three, and retried with exponential backoff capped at one hour; a manual
+  refresh clears the gates.
+- **Backup and restore**: one click copies the configuration, the encrypted key
+  store, its key file and the history database into `backups/<stamp>/`; a
+  restore is applied on the next start and keeps the replaced files as
+  `.before-restore-*`.
+- **Widget payload v3**: `platforms[]` carries `account_id` and
+  `account_name`, each balance account carries its own `today_spend`, and an
+  account with `show_in_widget: false` is left out. Rust `dsmon2-widget` reads
+  this build directly; the Rainmeter interface on 17654 is unchanged.
+
+### Changed
+
+- **The version is 2.4.0**, aligned with the Rust line.
+- **The tray tooltip lists every balance account** and every plan's remaining
+  share, not only the preferred one.
+
+### Notes
+
+- Existing behaviour is kept: `apis[]`/`api_id`, the preferred account,
+  parallel/one-hot fetching, the global threshold, the daily-spend lines and
+  the Rainmeter 17654 payload are unchanged.
+
 ## Python v2.0.3 Dev (2026-10-02)
 
 ### Added

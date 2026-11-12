@@ -57,6 +57,10 @@ class JsApi:
 
     def save_settings(self, settings):
         try:
+            # The WebView page predates accounts, quiet hours and the other
+            # v2.4 fields; merge what it sends over the current file so a save
+            # from this window cannot drop them.
+            settings = {**load_config(), **settings}
             api_key = settings.get("api_key", "").strip()
             if not api_key:
                 return {"success": False, "error": T("warn_no_key", settings.get("language", "zh"))}

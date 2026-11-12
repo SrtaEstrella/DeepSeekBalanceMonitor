@@ -55,6 +55,12 @@ DEFAULT_CONFIG = {
     "proxy_enabled": False,
     "rainmeter_enabled": True,
     "auto_start": False,
+    # Account-level overrides live on each entry of `apis`; these two lines
+    # suppress notifications for a time window without touching the state of
+    # whatever was pending.
+    "quiet_hours_enabled": False,
+    "quiet_hours_start": 23,
+    "quiet_hours_end": 7,
 }
 
 # ─── i18n ─────────────────────────────────────────────────────────
@@ -226,6 +232,48 @@ _T = {
         "days_7":            "7天",
         "days_30":           "30天",
         "days_180":          "180天",
+        # v2.4 — overview, subscriptions, account settings, backup
+        "overview":          "📋 概览",
+        "overview_hint":     "按风险排序；点击账户可跳到管理页",
+        "overview_total":    "合计",
+        "overview_empty_totals": "暂无余额数据",
+        "overview_empty":    "还没有账户，请先在「管理」页添加 API",
+        "overview_low":      "低于告警线 {line}",
+        "overview_budget":   "本月已支出 {spent}，预算 {budget}",
+        "overview_ok":       "正常",
+        "overview_no_data":  "尚未查询",
+        "subscriptions":     "🔐 订阅",
+        "subscriptions_hint": "每个套餐账户一张卡；数字来自最近一次查询",
+        "subscriptions_empty": "还没有套餐账户",
+        "subscriptions_today": "今日消耗 {value}",
+        "alert_threshold_label": "账户告警线",
+        "alert_threshold_hint": "0 = 使用全局告警线（按量填金额，套餐填剩余百分比）",
+        "monthly_budget_label": "月预算",
+        "alert_enabled_label": "参与告警",
+        "show_in_widget_label": "在桌面小工具显示",
+        "key_test_btn":      "测试",
+        "key_test_running":  "测试中…",
+        "key_test_ok":       "可用：{detail}",
+        "key_test_fail":     "失败：{error}",
+        "key_duplicate":     "该密钥已被账户「{name}」使用",
+        "validate_number":   "告警线与月预算需为数字。",
+        "quiet_hours_label": "安静时段",
+        "quiet_hours_hint":  "（该时段内不发送任何通知）",
+        "backup_now":        "立即备份",
+        "backup_done":       "已备份到 {path}",
+        "backup_failed":     "备份失败：{error}",
+        "restore_btn":       "恢复…",
+        "restore_pending":   "已登记，下次启动时恢复",
+        "low_bal_account_title": "⚠ {name} 余额不足",
+        "low_bal_account_msg":   "当前余额 {balance}，低于账户告警线 {threshold}。",
+        "quota_low_account_title": "⚠ {name} 套餐余量不足",
+        "quota_low_account_msg":   "当前剩余 {remaining}%，低于账户告警线 {threshold}%。",
+        "budget_alert_title": "⚠ {name} 本月支出达到预算",
+        "budget_alert_msg":   "本月已支出 {spent}，预算 {budget}。",
+        "failure_alert_title": "⚠ {name} 连续查询失败",
+        "failure_alert_msg":   "已连续失败 {count} 次，将在后台退避重试。",
+        "forecast_line":     "📉 按当前速度，约 {span}后跌破账户线",
+        "budget_line":       "💰 本月已支出 {spent} / 预算 {budget}，预计月末 {projected}",
     },
     "en": {
         "total_balance":    "Total balance",
@@ -394,6 +442,48 @@ _T = {
         "days_7":            "7d",
         "days_30":           "30d",
         "days_180":          "180d",
+        # v2.4 — overview, subscriptions, account settings, backup
+        "overview":          "📋 Overview",
+        "overview_hint":     "Sorted by risk; click an account to open it in Manage",
+        "overview_total":    "Total",
+        "overview_empty_totals": "No balance data yet",
+        "overview_empty":    "No accounts yet — add an API on the Manage page",
+        "overview_low":      "below the line {line}",
+        "overview_budget":   "Spent {spent} this month, budget {budget}",
+        "overview_ok":       "OK",
+        "overview_no_data":  "Not checked yet",
+        "subscriptions":     "🔐 Subscriptions",
+        "subscriptions_hint": "One card per plan account; figures come from the last check",
+        "subscriptions_empty": "No plan accounts yet",
+        "subscriptions_today": "Today {value}",
+        "alert_threshold_label": "Account line",
+        "alert_threshold_hint": "0 = use the global line (amount for PAYG, remaining % for plans)",
+        "monthly_budget_label": "Monthly budget",
+        "alert_enabled_label": "In alerts",
+        "show_in_widget_label": "Show in the desktop widget",
+        "key_test_btn":      "Test",
+        "key_test_running":  "Testing…",
+        "key_test_ok":       "Works: {detail}",
+        "key_test_fail":     "Failed: {error}",
+        "key_duplicate":     "This key is already used by \"{name}\"",
+        "validate_number":   "The line and the budget must be numbers.",
+        "quiet_hours_label": "Quiet hours",
+        "quiet_hours_hint":  "(no notifications inside this window)",
+        "backup_now":        "Back up now",
+        "backup_done":       "Backed up to {path}",
+        "backup_failed":     "Backup failed: {error}",
+        "restore_btn":       "Restore…",
+        "restore_pending":   "Scheduled — it will be applied on the next start",
+        "low_bal_account_title": "⚠ {name} low balance",
+        "low_bal_account_msg":   "Balance {balance} is below this account's line {threshold}.",
+        "quota_low_account_title": "⚠ {name} quota low",
+        "quota_low_account_msg":   "{remaining}% left, below this account's line {threshold}%.",
+        "budget_alert_title": "⚠ {name} reached its monthly budget",
+        "budget_alert_msg":   "Spent {spent} this month against a budget of {budget}.",
+        "failure_alert_title": "⚠ {name} keeps failing",
+        "failure_alert_msg":   "{count} consecutive failures; retrying with backoff.",
+        "forecast_line":     "📉 At this rate, the line in {span}",
+        "budget_line":       "💰 This month {spent} / budget {budget}, projected {projected}",
     },
 }
 
@@ -422,6 +512,15 @@ def _resolve_api_key(cfg: dict):
         cfg["api_key"] = key
 
 
+def _normalize_quiet_hours(cfg: dict) -> None:
+    """Quiet hours are clock hours; anything outside 0–23 falls back to the default."""
+    for key in ("quiet_hours_start", "quiet_hours_end"):
+        try:
+            cfg[key] = max(0, min(23, int(cfg.get(key, DEFAULT_CONFIG[key]))))
+        except (TypeError, ValueError):
+            cfg[key] = DEFAULT_CONFIG[key]
+
+
 def load_config() -> dict:
     if CONFIG_FILE.exists():
         try:
@@ -431,6 +530,7 @@ def load_config() -> dict:
             # normalize apis
             if not isinstance(cfg.get("apis"), list):
                 cfg["apis"] = []
+            _normalize_quiet_hours(cfg)
             # migrate legacy single key if needed
             migrated = _migrate_legacy_api(cfg)
             # ensure each api has mode
@@ -581,7 +681,9 @@ def get_preferred_api(cfg: dict | None = None):
     apis = get_apis(cfg)
     return apis[0] if apis else None
 
-def create_api(platform: str, name: str | None = None, api_key: str | None = None, mode: str | None = None, billing_period: str | None = None) -> str:
+def create_api(platform: str, name: str | None = None, api_key: str | None = None, mode: str | None = None, billing_period: str | None = None,
+               alert_threshold: float = 0.0, alert_enabled: bool = True,
+               monthly_budget: float = 0.0, show_in_widget: bool = True) -> str:
     cfg = load_config()
     apis = list(cfg.get("apis") or [])
     if not name or not name.strip():
@@ -600,7 +702,11 @@ def create_api(platform: str, name: str | None = None, api_key: str | None = Non
         from src.platforms.registry import get_platform as _gp
         pmeta = _gp(platform)
         mode = pmeta.default_mode if pmeta else "payg"
-    entry = {"id": api_id, "platform": platform, "name": name, "mode": mode, "billing_period": billing_period or "", "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+    entry = {"id": api_id, "platform": platform, "name": name, "mode": mode, "billing_period": billing_period or "", "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+             "alert_threshold": float(alert_threshold or 0.0),
+             "alert_enabled": bool(alert_enabled),
+             "monthly_budget": float(monthly_budget or 0.0),
+             "show_in_widget": bool(show_in_widget)}
     apis.append(entry)
     cfg["apis"] = apis
     if not cfg.get("preferred_api_id"):
@@ -615,7 +721,9 @@ def create_api(platform: str, name: str | None = None, api_key: str | None = Non
     log(f"Created API {name} ({platform}:{api_id})")
     return api_id
 
-def update_api(api_id: str, name: str | None = None, api_key: str | None = None, platform: str | None = None, mode: str | None = None, billing_period: str | None = None) -> bool:
+def update_api(api_id: str, name: str | None = None, api_key: str | None = None, platform: str | None = None, mode: str | None = None, billing_period: str | None = None,
+               alert_threshold: float | None = None, alert_enabled: bool | None = None,
+               monthly_budget: float | None = None, show_in_widget: bool | None = None) -> bool:
     cfg = load_config()
     apis = list(cfg.get("apis") or [])
     idx = next((i for i, a in enumerate(apis) if a.get("id") == api_id), None)
@@ -630,6 +738,14 @@ def update_api(api_id: str, name: str | None = None, api_key: str | None = None,
         entry["mode"] = mode
     if billing_period is not None:
         entry["billing_period"] = billing_period
+    if alert_threshold is not None:
+        entry["alert_threshold"] = max(0.0, float(alert_threshold))
+    if alert_enabled is not None:
+        entry["alert_enabled"] = bool(alert_enabled)
+    if monthly_budget is not None:
+        entry["monthly_budget"] = max(0.0, float(monthly_budget))
+    if show_in_widget is not None:
+        entry["show_in_widget"] = bool(show_in_widget)
     # ensure mode default if still missing
     if "mode" not in entry or entry["mode"] not in ("payg", "package"):
         from src.platforms.registry import get_platform as _gp

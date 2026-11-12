@@ -18,9 +18,11 @@ Rainmeter 小组件预览图
 
 ## 当前版本亮点
 
+- 账户化可用性（Python v2.4.0）：新增「概览」与「订阅」页；每个账户可设独立告警线、月预算与告警开关；安静时段内所有通知静默；密钥可在保存前测试，并拒绝重复使用；失败账户按指数退避重试，连续 3 次失败提醒一次；设置页支持一键备份与下次启动恢复。
+- 小工具契约升级到 v3：`platforms[]` 带 `account_id`、`account_name` 与每账户自己的 `today_spend`，并可在账户设置里隐藏某个账户。Rainmeter 17654 接口保持不变，Rust `dsmon2-widget` 可直接连接本版。
 - DeepSeek 服务状态改为双源解析：官方状态页 `status.deepseek.com` 优先，失败回退 FlashDuty 后端主机；并修正了「异常状态永不报告」的问题（旧源实为 FlashDuty 自家状态页）。
-- 余额与统计口径（Python v2.0.3 Dev）：负的分量按 0 处理、总额由钳后分量重算（赠送余额不再被负充值抵消）；消耗速率与预计可用改读总额列，预计可用基数按 0 钳制。
-- 加固与性能（Python v2.0.3 Dev）：本地状态接口不再向浏览器开放；重复启动被拒；配置文件无法解析时先备份为 `config.json.corrupt`；导出路径展开 `~`/`%VAR%`；额度百分比钳制到 0–100；首次打开主界面不再卡顿。
+- 余额与统计口径（Python v2.4.0）：负的分量按 0 处理、总额由钳后分量重算（赠送余额不再被负充值抵消）；消耗速率与预计可用改读总额列，预计可用基数按 0 钳制。
+- 加固与性能（Python v2.4.0）：本地状态接口不再向浏览器开放；重复启动被拒；配置文件无法解析时先备份为 `config.json.corrupt`；导出路径展开 `~`/`%VAR%`；额度百分比钳制到 0–100；首次打开主界面不再卡顿。
 - 自定义图标样式：5 套预置配色、自定义 hex 颜色和图标描边开关。
 - 历史记录页：分页余额记录、交互式趋势图和消耗速率分析。
 - CSV 导出支持配置保存路径。
@@ -100,6 +102,12 @@ Plasma 小组件是可选功能，需要 KDE Plasma 6。它从本机 `dsmon` 读
 5. 在小组件中点击 **查询** 可手动刷新余额。
 
 如果只需要小组件，可下载 `deepseek-balance-monitor-*-plasmoid.plasmoid` 并用 Plasma 小组件安装器安装。完整 Linux tar 包中也包含同一个小组件，路径为 `plasmoid/`。
+
+### 桌面小工具（Windows）
+
+Python 版在 `127.0.0.1:18964` 提供小工具契约 v3。Windows 桌面小工具是独立程序：到 <https://github.com/wenyinos/DeepSeekBalanceMonitor/releases/latest> 下载 `deepseek-balance-monitor-widget-2.4.0-windows-x64.msi`（ARM64 选 `arm64` 包），安装后启动 `dsmon2-widget`，它会直接读取本版数据。
+
+**兼容性：** 只有 2.4.0 的小工具支持契约 v3；2.3 及以前的 Rust 旧版小工具只认 v2，会拒绝 v3 载荷，不能与本 Python 版搭配。下面的 Rainmeter 17654 接口是另一套独立契约，保持不变。
 
 ### 可选 Rainmeter 小工具（Windows）
 

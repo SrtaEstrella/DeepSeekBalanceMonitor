@@ -163,6 +163,7 @@ def _fetch_package(api, proxy_url=""):
 
 
 def _do_balance_check_once(app: AppState):
+    failure_alerts = []
     if app.demo_mode:
         with app._lock:
             app.balances = _DEMO["balances"]
@@ -213,8 +214,10 @@ def _do_balance_check_once(app: AppState):
             return
         from concurrent.futures import ThreadPoolExecutor, as_completed
         proxy_url = cfg.get("http_proxy", "") if cfg.get("proxy_enabled") else ""
-        payg_apis = [a for a in apis if a.get("mode") == "payg"]
-        pkg_apis = [a for a in apis if a.get("mode") == "package"]
+        payg_apis = [a for a in apis if a.get("mode") == "payg"
+                     and app.backoff_ready(a.get("id") or "")]
+        pkg_apis = [a for a in apis if a.get("mode") == "package"
+                    and app.backoff_ready(a.get("id") or "")]
 
         def _fetch_status_for(plat):
             try:
@@ -255,8 +258,16 @@ def _do_balance_check_once(app: AppState):
             mode, api = futures[f]
             api_id, result, err = f.result()
             if result is None:
+                failures = app.record_fetch(api_id, False)
+                if app.failure_alert_due(api_id, failures):
+                    name = api.get("name") or api.get("platform") or api_id
+                    failure_alerts.append((
+                        T("failure_alert_title", app.lang, name=name),
+                        T("failure_alert_msg", app.lang, count=failures),
+                    ))
                 log(f"Check failed for {api.get('name')} ({mode}): {err}")
                 continue
+            app.record_fetch(api_id, True)
             # per-API status: this platform's own fetch result only.
             # Platforms without a status page (or failed fetches) write NULL —
             # never borrow the preferred API's indicator for another platform.
@@ -352,42 +363,64 @@ def _do_balance_check_once(app: AppState):
     except Exception:
         pass
 
-    if app.should_alert():
-        notify_user(app)
+    # The icon's own colour follows the reading whether or not notifications
+    # are allowed; quiet hours only silence the messages.
+    app.is_daily_spend_fast()
 
-    # single-day spend too fast → one-shot alert + orange icon state is derived in renderer
-    try:
-        app.is_daily_spend_fast()  # refresh fast-state for icon
-        if app.should_spend_alert():
-            lang = app.lang
-            msg = T("spend_alert_msg", lang,
-                    value=f"{get_today_spend_value(app)}",
-                    line=(f"{app.config.get('daily_spend_line_yuan', 20)}"
-                          if _pref_mode(app) == "payg" else
-                          f"{app.config.get('daily_spend_line_percent', 10)}%"))
-            app.icon.notify(msg, title=T("spend_alert_title", lang))
-    except Exception as e:
-        log(f"Spend alert failed: {e}")
+    # Quiet hours suppress every notification (Rust v2.4). The judgement is
+    # skipped entirely rather than consumed, so the same state is judged again
+    # once the window ends and nothing that happened inside it is replayed.
+    if not app.quiet_now():
+        if app.should_alert():
+            notify_user(app)
 
-    if app.config.get("api_alert_enabled", True):
-        transition = app.check_api_status_alert()
-        if transition:
-            notify_api_status(app, transition)
-
-    # DeepSeek peak/valley phase-change reminder (only when a deepseek API is preferred)
-    try:
-        if app.config.get("peak_valley_alert_enabled", False):
-            pref = next((a for a in app.config.get("apis") or []
-                         if a.get("id") == app.config.get("preferred_api_id")), {})
-            if str(pref.get("platform", "")).startswith("deepseek"):
+        # single-day spend too fast → one-shot alert
+        try:
+            if app.should_spend_alert():
                 lang = app.lang
-                phase = app.check_peak_valley_transition()
-                if phase:
-                    key = f"peak_alert_{phase}"
-                    app.icon.notify(T(key, lang), title="DeepSeek")
-                    log(f"Peak/valley reminder: {phase}")
-    except Exception as e:
-        log(f"Peak/valley reminder failed: {e}")
+                msg = T("spend_alert_msg", lang,
+                        value=f"{get_today_spend_value(app)}",
+                        line=(f"{app.config.get('daily_spend_line_yuan', 20)}"
+                              if _pref_mode(app) == "payg" else
+                              f"{app.config.get('daily_spend_line_percent', 10)}%"))
+                app.icon.notify(msg, title=T("spend_alert_title", lang))
+        except Exception as e:
+            log(f"Spend alert failed: {e}")
+
+        # Accounts other than the preferred one, when they carry a line or a
+        # budget of their own.
+        for title, msg in app.account_alerts():
+            try:
+                app.icon.notify(msg, title=title)
+            except Exception as e:
+                log(f"Account alert failed: {e}")
+
+        # A failure episode is announced once, not on every retry.
+        for title, msg in failure_alerts:
+            try:
+                app.icon.notify(msg, title=title)
+            except Exception as e:
+                log(f"Failure alert failed: {e}")
+
+        if app.config.get("api_alert_enabled", True):
+            transition = app.check_api_status_alert()
+            if transition:
+                notify_api_status(app, transition)
+
+        # DeepSeek peak/valley phase-change reminder (only when a deepseek API is preferred)
+        try:
+            if app.config.get("peak_valley_alert_enabled", False):
+                pref = next((a for a in app.config.get("apis") or []
+                             if a.get("id") == app.config.get("preferred_api_id")), {})
+                if str(pref.get("platform", "")).startswith("deepseek"):
+                    lang = app.lang
+                    phase = app.check_peak_valley_transition()
+                    if phase:
+                        key = f"peak_alert_{phase}"
+                        app.icon.notify(T(key, lang), title="DeepSeek")
+                        log(f"Peak/valley reminder: {phase}")
+        except Exception as e:
+            log(f"Peak/valley reminder failed: {e}")
 
 
 def do_balance_check(app: AppState):
@@ -598,6 +631,9 @@ def on_check_now(icon, item):
     if app is None:
         return
     app.cancel_timer()
+    # A manual refresh is how the user forces a try: clear every retry gate
+    # (Rust v2.4) so an account backing off is asked again right away.
+    app.clear_backoff()
     threading.Thread(target=do_balance_check, args=(app,), daemon=True).start()
     log("Manual check triggered")
 
@@ -880,6 +916,11 @@ def main():
     _tk_root = tk.Tk()
     _tk_root.withdraw()
 
+    # A pending restore is applied before the configuration or the database is
+    # opened; the files it replaced stay beside them as .before-restore-*.
+    from src.core.backup import apply_pending_restore
+    apply_pending_restore()
+
     app = AppState()
     app._tk_root = _tk_root
     app._main_window = None
@@ -916,7 +957,12 @@ def main():
     except Exception as e:
         log(f"Window warm-up skipped: {e}")
 
-    app._trigger_check = lambda a=app: threading.Thread(target=do_balance_check, args=(a,), daemon=True).start()
+    def _trigger_check(a=app):
+        # The widget's refresh is the user asking for a try, so it clears the
+        # retry gates exactly like the tray's manual check (Rust v2.4).
+        a.clear_backoff()
+        threading.Thread(target=do_balance_check, args=(a,), daemon=True).start()
+    app._trigger_check = _trigger_check
     # entry callback for the automatic poll loop — do_balance_check re-arms it
     # in a finally block after every cycle
     app._poll_cb = lambda a=app: do_balance_check(a)

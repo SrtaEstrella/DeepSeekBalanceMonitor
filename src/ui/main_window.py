@@ -86,6 +86,10 @@ class MainWindow:
             self._holders[key] = holder
             self._builders[key] = builder
 
+        def _build_overview(parent):
+            from src.ui.overview_frame import OverviewFrame
+            return OverviewFrame(parent, self.app)
+
         def _build_manage(parent):
             from src.ui.manage_frame import ManageFrame
             return ManageFrame(parent, self.app, on_change=self._on_api_change)
@@ -94,12 +98,18 @@ class MainWindow:
             from src.ui.history_dialog import HistoryFrame
             return HistoryFrame(parent, self.app)
 
+        def _build_subscriptions(parent):
+            from src.ui.subscriptions_frame import SubscriptionsFrame
+            return SubscriptionsFrame(parent, self.app)
+
         def _build_settings(parent):
             from src.ui.settings_dialog import SettingsFrame
             return SettingsFrame(parent, self.app, on_save=self._on_settings_saved)
 
+        _register("overview", T("overview", lang), _build_overview)
         _register("manage", T("manage", lang), _build_manage)
         _register("history", T("dashboard", lang), _build_dashboard)
+        _register("subscriptions", T("subscriptions", lang), _build_subscriptions)
         _register("settings", T("settings", lang).rstrip("…"), _build_settings)
         if self.app.demo_mode:
             def _build_dev(parent):
@@ -383,6 +393,13 @@ class MainWindow:
                 sett.refresh_preferred_selector()
         except Exception:
             pass
+        for key in ("overview", "subscriptions"):
+            try:
+                page = self._tabs.get(key)
+                if page is not None and hasattr(page, "refresh"):
+                    page.refresh()
+            except Exception:
+                pass
         try:
             from src.ui.icon_renderer import create_icon_image
             if self.app.icon:

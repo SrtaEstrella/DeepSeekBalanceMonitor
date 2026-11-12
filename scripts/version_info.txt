@@ -26,12 +26,12 @@ VSVersionInfo(
         u'040904B0',  # US English, Unicode
         [StringStruct(u'CompanyName', u''),
          StringStruct(u'FileDescription', u'DeepSeek Balance Monitor'),
-         StringStruct(u'FileVersion', u'2.0.3.0'),
+         StringStruct(u'FileVersion', u'2.4.0.0'),
          StringStruct(u'InternalName', u'DeepSeekBalanceMonitor'),
          StringStruct(u'LegalCopyright', u''),
          StringStruct(u'OriginalFilename', u'DeepSeekBalanceMonitor.exe'),
          StringStruct(u'ProductName', u'DeepSeek Balance Monitor'),
-         StringStruct(u'ProductVersion', u'2.0.3 Dev'),
+         StringStruct(u'ProductVersion', u'2.4.0'),
         ]),
     ]),
     VarFileInfo([VarStruct(u'Translation', [1033, 1200])]),  # US English, Unicode

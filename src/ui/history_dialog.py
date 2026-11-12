@@ -476,6 +476,45 @@ class HistoryFrame(ttk.Frame):
                 if hourly_rate is not None:
                     total_hrs = round(busy_hours, 1)
                     lines.append(f"📊 {T('rate_line', lang, rate=hourly_rate, prefix=T('est_prefix', lang), remaining=f'{total_hrs}')}")
+                    # Account forecast (Rust v2.4): when the account's own line
+                    # is reached at this rate, and this month against its budget.
+                    if pb and hourly_rate > 0:
+                        api_entry = next((a for a in (cfg.get("apis") or [])
+                                          if a.get("id") == api_id), None) or {}
+                        try:
+                            own = float(api_entry.get("alert_threshold") or 0.0)
+                        except (TypeError, ValueError):
+                            own = 0.0
+                        line_yuan = own if own > 0 else (
+                            float(self.app.config.get("threshold_yuan", 1.0))
+                            if api_id == self.app.config.get("preferred_api_id") else 0.0)
+                        total_bal = pb.get("total_balance", 0.0)
+                        if line_yuan > 0 and total_bal > line_yuan:
+                            hours = (total_bal - line_yuan) / hourly_rate
+                            if hours >= 24:
+                                span = T("remaining_dh", lang, d=int(hours // 24),
+                                         h=int(hours % 24))
+                            elif hours >= 1:
+                                span = T("remaining_h", lang, h=int(hours))
+                            else:
+                                span = T("remaining_lt1h", lang)
+                            lines.append(T("forecast_line", lang, span=span))
+                        try:
+                            budget = float(api_entry.get("monthly_budget") or 0.0)
+                        except (TypeError, ValueError):
+                            budget = 0.0
+                        if budget > 0:
+                            from src.core.storage import get_month_spend
+                            from calendar import monthrange
+                            spent = get_month_spend(api_id)
+                            if spent:
+                                now = datetime.now()
+                                days_left = monthrange(now.year, now.month)[1] - now.day
+                                projected = spent[1] + hourly_rate * 24 * days_left
+                                lines.append(T("budget_line", lang,
+                                               spent=f"{spent[1]:,.2f}",
+                                               budget=f"{budget:,.2f}",
+                                               projected=f"{projected:,.2f}"))
             ind = st.get("indicator") if st else None
             skey = f"status_{ind}" if ind else "status_unknown"
             lines.append(f"📡 {T('service_status', lang)} {_STATUS_ICON.get(ind, '⚪')} {T(skey, lang)}")
