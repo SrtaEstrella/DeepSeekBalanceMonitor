@@ -8,7 +8,12 @@ so a live WAL does not leave a half-written database behind.
 A restore is deliberately not applied while the application runs: the request
 writes `.restore-pending`, and the next start swaps the files in before the
 database or the configuration is opened. The files being replaced are kept
-beside them as `.before-restore-<stamp>`.
+beside them as `.before-restore-<stamp>`, and are put back if the swap fails
+half way through.
+
+A backup folder is as sensitive as the data directory: it holds the encrypted
+key store together with the key file that opens it, so copying one somewhere
+else means copying the keys with it.
 """
 import json
 import shutil
@@ -74,6 +79,8 @@ def apply_pending_restore() -> bool:
     """Applies a pending restore; called before the database is opened."""
     if not PENDING.exists():
         return False
+    keep = None
+    replaced = []
     try:
         payload = json.loads(PENDING.read_text(encoding="utf-8"))
         source = Path(payload.get("source", ""))
@@ -96,12 +103,24 @@ def apply_pending_restore() -> bool:
                 if side.exists():
                     side.unlink()
             _copy_file(source_file, target)
+            replaced.append(target)
 
         PENDING.unlink()
         log(f"Restored from {source}; previous files kept in {keep}")
         return True
     except Exception as e:
-        log(f"Restore failed: {e}")
+        # Put back what was already swapped in: half a restore would leave the
+        # configuration from one folder beside the database from another, and
+        # the copies in `keep` are exactly what is needed to undo it.
+        if keep is not None:
+            for target in replaced:
+                original = keep / target.name
+                if original.exists():
+                    try:
+                        _copy_file(original, target)
+                    except Exception as undo_error:
+                        log(f"Could not put {target.name} back: {undo_error}")
+        log(f"Restore failed, previous files put back: {e}")
         try:
             PENDING.unlink()
         except Exception:
