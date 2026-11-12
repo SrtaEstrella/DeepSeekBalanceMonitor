@@ -104,6 +104,7 @@ jobs:
           gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $env:GITHUB_REF_NAME $assets --clobber --repo $env:GITHUB_REPOSITORY
+            gh release edit $env:GITHUB_REF_NAME --prerelease --repo $env:GITHUB_REPOSITORY
           } else {
-            gh release create $env:GITHUB_REF_NAME $assets --title $env:GITHUB_REF_NAME --notes "Python build." --repo $env:GITHUB_REPOSITORY
+            gh release create $env:GITHUB_REF_NAME $assets --title $env:GITHUB_REF_NAME --notes "Python 2.4.0 build (pre-release)." --prerelease --repo $env:GITHUB_REPOSITORY
           }

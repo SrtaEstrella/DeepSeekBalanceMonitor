@@ -546,6 +546,37 @@ def get_today_total_spend(api_id: str) -> tuple | None:
     return rows[-1][0], round(spend, 2)
 
 
+def get_month_spend(api_id: str) -> tuple | None:
+    """This calendar month's consumption from the `total` column.
+
+    Same rule as `get_today_total_spend` (positive drops added up, no negative
+    bucket), over the month-to-date window. Returns (currency, amount) or None
+    when the month has no comparable readings yet.
+    """
+    try:
+        conn = _connect()
+        first = datetime.now().strftime("%Y-%m-01 00:00:00")
+        cur = conn.execute(
+            "SELECT currency, total FROM balance_history "
+            "WHERE api_id=? AND timestamp>=? ORDER BY timestamp ASC",
+            (api_id or "", first),
+        )
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        log(f"Failed to compute this month's spend: {e}")
+        return None
+
+    if len(rows) < 2 or rows[0][0] != rows[-1][0]:
+        return None
+    spend = 0.0
+    for i in range(1, len(rows)):
+        drop = rows[i - 1][1] - rows[i][1]
+        if drop > 0:
+            spend += drop
+    return rows[-1][0], round(spend, 2)
+
+
 def get_history_page(limit: int = 100, offset: int = 0, api_id: str | None = None):
     """Return one page of balance records, newest first. Filter by api_id if given."""
     try:

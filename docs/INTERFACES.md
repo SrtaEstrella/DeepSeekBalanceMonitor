@@ -42,24 +42,28 @@
 ```json
 {
   "version": 2,
-  "provider": { "name": "dsmon2", "version": "2.2.0" },
+  "provider": { "name": "dsmon2", "version": "2.4.0" },
   "generated_at": "2026-09-15 10:42:00",
   "lang": "zh",
   "checking": false,
   "service_status": "none",
   "last_check_at": "2026-09-15 10:42:00",
   "last_check_sec": 42,
-  "today_spend": { "platform": "deepseek", "currency": "CNY", "amount": 12.5 },
+  "today_spend": { "platform": "deepseek", "account_id": "a1",
+                   "currency": "CNY", "amount": 12.5 },
   "platforms": [
     {
-      "key": "deepseek", "display": "DeepSeek", "kind": "payg",
+      "key": "deepseek", "account_id": "a1", "account_name": "DeepSeek-1",
+      "display": "DeepSeek", "kind": "payg",
       "balances": [{ "currency": "CNY", "total_balance": 12.34,
                      "topped_up_balance": 10.0, "granted_balance": 2.34 }],
       "rate": { "hourly_rate": 0.42, "busy_hours_left": 291.5, "currency": "CNY" },
       "windows": [],
       "service_status": "none",
       "series": [{ "t": 1757900000, "v": 12.34 }],
-      "daily": [{ "date": "2026-09-14", "used": 3.2, "weekday": 0 }]
+      "daily": [{ "date": "2026-09-14", "used": 3.2, "weekday": 0 }],
+      "today_spend": { "platform": "deepseek", "account_id": "a1",
+                       "currency": "CNY", "amount": 12.5 }
     }
   ]
 }
@@ -67,7 +71,7 @@
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `version` | 整数 | 载荷格式的主版本，当前 **2**。客户端遇到不认识的主版本要提示「主程序版本过新，请升级」，不要装作连不上 |
+| `version` | 整数 | 载荷格式的主版本，当前 **3**。客户端遇到不认识的主版本要提示「主程序版本过新，请升级」，不要装作连不上 |
 | `provider` | 对象 | 谁在供数（`name` + 版本），便于诊断 |
 | `generated_at` | 字符串 | 生成时刻，`%Y-%m-%d %H:%M:%S`（与数据库同格式） |
 | `lang` | 字符串 | 主程序当前语言，`zh` / `en`；**给小工具之外的消费者参考**，小工具自己从配置读 |
@@ -75,8 +79,10 @@
 | `service_status` | 字符串 | 服务状态指示，取值见 §7.4 |
 | `last_check_at` | 字符串｜null | 上次成功查询的时刻，**已格式化**（`%Y-%m-%d %H:%M:%S`）；客户端直接显示，不需要日期库 |
 | `last_check_sec` | 整数｜null | 距上次成功查询的秒数，供客户端判断数据新鲜度 |
-| `today_spend` | 对象｜null | 某个余额平台**今天已经花掉的金额**：`platform`（哪个平台）、`currency`、`amount`。算法是「当日第一条读数 − 最后一条」（与历史页的 `1d` 同一个滚动窗口），余额上升（充值）或当天只有一条读数时为 `null`——**没有可比的东西就不报数**，不拿 0 冒充。客户端应把它显示在**对应平台**的卡片上 |
+| `today_spend` | 对象｜null | 某个余额账户**今天已经花掉的金额**：`platform`、`account_id`、`currency`、`amount`。算法是「当日第一条读数 − 最后一条」（与历史页的 `1d` 同一个滚动窗口），余额上升（充值）或当天只有一条读数时为 `null`——**没有可比的东西就不报数**，不拿 0 冒充。顶层这一份是首选账户的，账户自己的那份在 `platforms[].today_spend` |
 | `platforms[].key` | 字符串 | 平台标识，与 §2 的密钥名、§3 的 `platform` 列**同一个值** |
+| `platforms[].account_id` | 字符串 | 账户 id，与 `config.json` 里 `apis[].id`（Rust 为 `accounts[].id`）**同一个值** |
+| `platforms[].account_name` | 字符串 | 账户名，设置页显示的那个；同名平台的两个 key 靠它区分 |
 | `platforms[].display` | 字符串 | 展示名（专有名词，不翻译） |
 | `platforms[].kind` | 字符串 | `payg`（余额）或 `package`（额度窗口），同 `catalog::Mode` |
 | `platforms[].balances[]` | 数组 | 各币种余额，字段同 `model::Balance`（`total_balance` / `topped_up_balance` /
@@ -86,10 +92,11 @@
 | `platforms[].service_status` | 字符串｜缺省 | 平台自己的状态页指示（取值见 §7.4）。**只有有状态页的平台携带**（DeepSeek、MiniMax），其余省略；客户端按缺失画「无状态行」 |
 | `platforms[].series[]` | 数组 | **余额曲线**，按 `days` 截取，**降采样到 ≤240 点**；`t` 秒级时间戳、`v` 总余额 |
 | `platforms[].daily[]` | 数组 | 每日用量（热力图）：`date`（`YYYY-MM-DD`）、`used`、`weekday`（0=周一，客户端据此排版，仍不需要日期库） |
+| `platforms[].today_spend` | 对象｜null | 这个账户今天已经花掉的金额，字段同顶层 `today_spend`；`package` 账户没有金额时为 `null` |
 
 ### 1.4 不变式 🔒
 
-1. **只含已配置平台**（该平台有密钥），顺序按 `catalog::PLATFORMS`；一个都没有就是空数组。
+1. **只含已配置的账户**（该账户有密钥，且 `show_in_widget` 不为 `false`），顺序按 `config.json` 的账户列表；一个都没有就是空数组。同名平台的两个 key 是两个条目，靠 `account_id` 区分。
 2. **窗口名给键、不给成品文案**：`name_key` ∈ {`window_5h`, `window_weekly`, `window_monthly`}，
    由客户端翻译（客户端与主程序共用同一张 i18n 表）。
 3. **不传凭据**：响应里没有任何 API Key、密文或密钥材料；客户端不需要提供任何凭据，**接口不做鉴权、
@@ -126,6 +133,9 @@
 | `auto_start` | 布尔 | false | — | 开机自启 |
 | `alert_mode` | 字符串 | `once` | `once` / `always` / `never` | 低余额告警频率 |
 | `api_alert_enabled` | 布尔 | true | — | 服务状态异常是否告警 |
+| `quiet_hours_enabled` | 布尔 | false | — | 安静时段总开关；时段内所有通知静默 |
+| `quiet_hours_start` | 整数 | 23 | 0–23 | 安静时段开始小时（本地时间，可跨午夜） |
+| `quiet_hours_end` | 整数 | 7 | 0–23 | 安静时段结束小时（不含该时） |
 | `peak_alert_enabled` | 布尔 | false | — | DeepSeek 峰谷切换是否提醒 |
 | `brisk_threshold_yuan` | 浮点 | 0 | 0 = 关 | 余额单日消耗提醒线 |
 | `brisk_package_percent` | 浮点 | 0 | 0 = 关，≤100 | 套餐单日消耗提醒线（百分点） |
@@ -150,6 +160,20 @@
 | `window_pos` | 数组｜null | null | `[x, y]` | 主窗口位置（2.0 尚未使用） |
 | `widget_window_size` | 数组｜null | null | `[w, h]`，夹取到 280×240 … 2000×2000 | **小工具自己的尺寸**：用户拖拽后写回。与 `window_size` 分开是因为后者是上一版的遗留、2.0 无人读，不该拿来当小工具的状态 |
 | `tray_hint_shown` | 布尔 | false | — | 「仍在托盘运行」提示是否已展示过 |
+
+账户级字段（Python 是 `apis[]` 的每一项，Rust 是 `accounts[]` 的每一项；id 都是 `secure_settings`
+里的密钥名）：
+
+| 字段 | 类型 | 默认 | 用途 |
+|---|---|---|---|
+| `id` | 字符串 | — | 账户 id，同时是密钥的存储名与历史的 `account_id`/`api_id` |
+| `platform` | 字符串 | — | 平台 key（§7.1） |
+| `name` | 字符串 | 平台展示名 | 设置页与通知里的账户名 |
+| `mode` | 字符串 | 平台默认 | `payg` / `package`（Python 的字段；Rust 由平台目录决定） |
+| `alert_enabled` | 布尔 | true | 该账户是否参与告警 |
+| `alert_threshold` | 浮点 | 0 | 账户自己的线：按量是金额，套餐是剩余百分比；0 = 用全局线（首选）或不单独告警（非首选） |
+| `monthly_budget` | 浮点 | 0 | 该账户的月预算（账户币种）；0 = 关 |
+| `show_in_widget` | 布尔 | true | 桌面小工具是否绘制该账户；不影响轮询 |
 
 两条纪律：
 
@@ -209,6 +233,15 @@ secure_settings(key PRIMARY KEY, value BLOB, updated_at)
   覆盖。小工具只 append 日志（`O_APPEND` 单行写入）。
 - 首启会从「过去共用的那个目录」搬移本版自己的文件（`dsmon.db`、`.secure_settings.key`、
   `.dsmon.db.initialized`，以及靠独有字段认出的 `config.json`）；**目标已存在就跳过**。
+
+备份与恢复（Python 实现）：
+
+- 备份写到 `<配置目录>/backups/<YYYYmmdd-HHMMSS>/`，包含 `config.json`、`secure_settings.db`、
+  `.keyfile`、`balance_history.db`；两个 SQLite 文件用 `sqlite3.Connection.backup` 复制，避免把
+  正在写的 WAL 复制成半截文件。
+- 恢复请求写成 `<配置目录>/.restore-pending`（内容是备份目录的绝对路径）；**下次启动、打开数据库
+  之前**应用，被替换的文件留在 `.before-restore-<时间戳>/`。恢复失败会删掉 marker 并记日志。
+- 备份/恢复只在本实现自己的数据目录内使用，不跨实现；1.x 与 Rust 的目录仍然只读。
 
 ---
 
@@ -316,10 +349,13 @@ secure_settings(key PRIMARY KEY, value BLOB, updated_at)
 
 | 项 | 规则 |
 |---|---|
-| 低余额告警 | 首选币种余额 `< threshold_yuan` 时触发；`alert_mode`：`once` 每次跌破只报一次、`always` 每次轮询都报、`never` 不报 |
+| 低余额告警 | 首选币种余额 `< threshold_yuan` 时触发；`alert_mode`：`once` 每次跌破只报一次、`always` 每次轮询都报、`never` 不报。首选账户设了自己的 `alert_threshold` 时用它替代全局线；`alert_enabled: false` 的账户不发通知（图标仍按读数变色） |
+| 账户级告警 | 非首选账户只在自己有 `alert_threshold` 时判定：按量是金额（主币种），套餐是剩余百分比；`alert_mode` 同样适用。`monthly_budget > 0` 的余额账户在本月支出达到预算时每月提醒一次 |
 | 套餐低额 | 任一计划的主窗口（monthly → weekly → 5h 取先有者）剩余 `< threshold_package_percent` 时图标转低额；**不发通知**（与 1.x 相同：1.x 的 `should_alert` 只查余额） |
 | 套餐单日过快 | `brisk_package_percent` > 0 且某计划当日窗口消耗（正增量累加）≥ 该线时，图标转「过快」并按日提醒一次 |
 | 服务异常告警 | `api_alert_enabled` 为真且服务状态非 `none` 时触发 |
+| 安静时段 | `quiet_hours_enabled` 为真且本地时钟落在 `[start, end)` 内（可跨午夜）时，上面的通知全部静默；判定被跳过而不是消耗，窗口结束后按当时的读数重新判定 |
+| 失败提醒 | 每个账户连续失败计数；连续 3 次提醒一次，之后按轮询间隔指数退避（上限 1 小时）重试；手动刷新与小工具的 `/check` 清除退避 |
 | Linux 通道 | `org.freedesktop.Notifications`（zbus 直连；没有通知守护就静默） |
 | Windows 通道 | 托盘气泡（`Shell_NotifyIconW` + `NIF_INFO`） |
 | 谁发通知 | **只有主程序发**。小工具与任何只读客户端都不发，否则同一件事会响两次 |

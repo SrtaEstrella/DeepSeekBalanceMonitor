@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SPEC_FILE="$ROOT_DIR/scripts/DeepSeekBalanceMonitor.spec"
 DIST_DIR="$ROOT_DIR/dist"
 APP_NAME="DeepSeek Balance Monitor.app"
-VERSION="1.1"
+VERSION="2.4.0"
 
 GREEN='\033[0;32m'; BLUE='\033[0;34m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; NC='\033[0m'
 

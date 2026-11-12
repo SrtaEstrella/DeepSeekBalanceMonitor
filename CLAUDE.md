@@ -108,11 +108,11 @@ dsmon opencode-go set-key <api_key>   # 加密保存 API Key
 - 调用 `get_consumption_rate()` 注意返回值语义：`hourly_rate` 而非旧 `daily_rate`
 - 显示格式统一——中文 `📊 忙时消耗 0.06/小时 | 预计可用 28 天 4 小时`；英文 `📊 Busy: 0.06/hr | Est. 28d 4h remaining`
 - Rainmeter 取 `estimated_line` 字段；Plasma 直接从 `consumption_rate` 计算；Rust 版已跟进此算法
-- **样本时长门槛（v2.0.3 Dev）**：参与加权的区间必须不短于 `max(60 秒, 半个轮询周期)`，替代原先 0.01 小时（36 秒）的经验值——46 秒区间携带 0.08 落差时会独占权重、外推出 6.26/小时
+- **样本时长门槛（v2.4.0）**：参与加权的区间必须不短于 `max(60 秒, 半个轮询周期)`，替代原先 0.01 小时（36 秒）的经验值——46 秒区间携带 0.08 落差时会独占权重、外推出 6.26/小时
 
-### 余额与统计口径（Python v2.0.3 Dev）
+### 余额与统计口径（Python v2.4.0）
 
-- Python 版当前版本 **v2.0.3 Dev**：应用内显示于设置页作者块上方；exe 版本资源见 `scripts/version_info.txt`
+- Python 版当前版本 **v2.4.0**：应用内显示于设置页作者块上方；exe 版本资源见 `scripts/version_info.txt`
 - **负分量不是可用余额**：DeepSeek 各分量各自钳 0，`total_balance` 由钳后分量重算（`充值 -0.10 + 赠送 6.00` → **6.00**，而非 API 原始相加 5.90）；历史负分量行在 `storage._connect()` 幂等修正（`WHERE topped<0 OR granted<0`）
 - **统计读 `total`，不读 `topped`**：消耗可能走赠送余额，只读充值列会得到恒定序列（实测速率恒 0、预计可用算出负值）；预计可用基数 `max(0, 最新 total)`
 - 注意 `total = 充值 + 赠送` 并非所有平台成立（OpenRouter 的 `topped_up_balance` 是累计充值而非剩余现金），故不得对全部历史行按分量重算

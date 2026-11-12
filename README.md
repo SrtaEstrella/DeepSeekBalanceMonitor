@@ -18,9 +18,13 @@ Rainmeter widget preview
 
 ## Current Version Highlights
 
+> The Python 2.4.0 build is published as a pre-release; the Rust 2.4.0 release is the stable line.
+
+- Account usability (Python v2.4.0): an Overview page and a Subscriptions page; each account can carry its own alert line, monthly budget and alert switch; quiet hours silence every notification; a key can be tested before saving and is refused when another account already uses it; a failing account backs off exponentially and its failure episode is announced once; the settings page backs up and restores the data directory.
+- The widget contract is v3: `platforms[]` carries `account_id`, `account_name` and each account's own `today_spend`, and an account can be hidden from the panel. The Rainmeter interface on 17654 is unchanged, and the Rust `dsmon2-widget` can read this build directly.
 - DeepSeek service status is parsed from a dual source: the official status page `status.deepseek.com` first, falling back to FlashDuty's backend host; this also fixes a long-standing bug where an outage was never reported (the previous source was FlashDuty's own status page).
-- Balance and statistics semantics (Python v2.0.3 Dev): negative buckets clamp to 0 and the total is derived from the clamped buckets, so the granted balance is no longer cancelled by a negative top-up; the consumption rate and the estimated-hours figure read the total column and clamp the base at 0.
-- Hardening and performance (Python v2.0.3 Dev): the local status endpoint is no longer open to browsers, a second launch is refused, an unreadable config is backed up as `config.json.corrupt`, export paths expand `~`/`%VAR%`, quota percentages clamp to 0–100, and the main window no longer stalls on first open.
+- Balance and statistics semantics (Python v2.4.0): negative buckets clamp to 0 and the total is derived from the clamped buckets, so the granted balance is no longer cancelled by a negative top-up; the consumption rate and the estimated-hours figure read the total column and clamp the base at 0.
+- Hardening and performance (Python v2.4.0): the local status endpoint is no longer open to browsers, a second launch is refused, an unreadable config is backed up as `config.json.corrupt`, export paths expand `~`/`%VAR%`, quota percentages clamp to 0–100, and the main window no longer stalls on first open.
 - Custom icon styling with 5 preset colour themes, custom hex colours, and an icon stroke toggle.
 - History viewer with paginated balance records, an interactive trend chart, and consumption rate analysis.
 - CSV export with a configurable save path.

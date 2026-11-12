@@ -1,14 +1,14 @@
 # Contributing
 
-> 本文档描述 v2.0.3 Dev 的 Python-Windows 运行时架构与各端约定，供贡献者快速建立基线。
+> 本文档描述 v2.4.0 的 Python-Windows 运行时架构与各端约定，供贡献者快速建立基线。
 > 权威细节（配置/密钥存储/多平台矩阵/忙时算法）见 `CLAUDE.md`；agent 高信号事实见 `AGENTS.md`。
 > 同一功能存在 Python 与 Rust 双实现，修改 API 客户端 / 忙时速率算法 / 告警逻辑时必须同步检查两端。
 
 ## 项目状态
 
-v2.0.3 Dev 包结构；15 平台（DeepSeek/Kimi/StepFun/OpenRouter 按量 + OCGo/MiniMax/Command Code/GLM 套餐）；管理页设为首选按钮；并行/单打双查询模式；Python 与 Rust 双实现。
+v2.4.0 包结构；15 平台（DeepSeek/Kimi/StepFun/OpenRouter 按量 + OCGo/MiniMax/Command Code/GLM 套餐）；管理页设为首选按钮；并行/单打双查询模式；概览/订阅页；账户级告警线、月预算与安静时段；密钥测试与失败退避；备份恢复；小工具契约 v3；Python 与 Rust 双实现。
 
-### 架构总览（v2.0.3 Dev 包结构）
+### 架构总览（v2.4.0 包结构）
 
 ```
 src/

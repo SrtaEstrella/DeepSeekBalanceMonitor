@@ -2,10 +2,12 @@
 API Management Frame — for MainWindow Notebook.
 Multi-platform multi-account via platform registry.
 """
+import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
 
 from src.core.config import T, load_config, create_api, update_api, delete_api, get_apis
+from src.core.secure_settings import read_api_key_for_id
 from src.platforms.registry import get_all_platforms, get_platform
 
 
@@ -65,6 +67,17 @@ class ApiManagementFrame(ttk.Frame):
         self._hint_label = ttk.Label(self, textvariable=self.hint, font=("Segoe UI", 9), foreground="#888")
 
         self.refresh()
+
+    def select_api(self, api_id: str) -> bool:
+        """Selects the row for an account id (the overview's cards use this)."""
+        for item in self.tree.get_children():
+            values = self.tree.item(item, "values")
+            if len(values) >= 4 and values[3] == api_id:
+                self.tree.selection_set(item)
+                self.tree.focus(item)
+                self.tree.see(item)
+                return True
+        return False
 
     def _selected_id(self):
         sel = self.tree.selection()
@@ -235,7 +248,7 @@ class ApiManagementFrame(ttk.Frame):
         # Toplevel form
         top = tk.Toplevel(self.winfo_toplevel())
         top.title(T("edit_api", lang) if is_edit else T("add_api", lang))
-        top.geometry("420x480")
+        top.geometry("440x660")
         top.transient(self.winfo_toplevel())
         top.grab_set()
         top.resizable(False, False)
@@ -360,6 +373,25 @@ class ApiManagementFrame(ttk.Frame):
         plat_combo_var.trace_add("write", _refresh_billing)
         _refresh_billing()
 
+        # Account-level settings (Rust v2.4): a line of its own, a monthly
+        # budget, and whether the account takes part in alerts / the widget.
+        acct_frame = ttk.Frame(top)
+        acct_frame.pack(fill="x", padx=12, pady=(8, 0))
+        ttk.Label(acct_frame, text=T("alert_threshold_label", lang)).grid(row=0, column=0, sticky="w")
+        alert_var = tk.StringVar(value=str(api.get("alert_threshold", 0) if is_edit else 0))
+        ttk.Entry(acct_frame, textvariable=alert_var, width=10).grid(row=0, column=1, sticky="w", padx=(6, 0))
+        ttk.Label(acct_frame, text=T("monthly_budget_label", lang)).grid(row=0, column=2, sticky="w", padx=(14, 0))
+        budget_var = tk.StringVar(value=str(api.get("monthly_budget", 0) if is_edit else 0))
+        ttk.Entry(acct_frame, textvariable=budget_var, width=10).grid(row=0, column=3, sticky="w", padx=(6, 0))
+        alert_enabled_var = tk.BooleanVar(value=bool(api.get("alert_enabled", True)) if is_edit else True)
+        ttk.Checkbutton(acct_frame, text=T("alert_enabled_label", lang),
+                        variable=alert_enabled_var).grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        widget_var = tk.BooleanVar(value=bool(api.get("show_in_widget", True)) if is_edit else True)
+        ttk.Checkbutton(acct_frame, text=T("show_in_widget_label", lang),
+                        variable=widget_var).grid(row=1, column=2, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Label(acct_frame, text=T("alert_threshold_hint", lang),
+                  foreground="#888", font=("Segoe UI", 8)).grid(row=2, column=0, columnspan=4, sticky="w", pady=(2, 0))
+
         # Buttons
         btn_frame = ttk.Frame(top)
         btn_frame.pack(fill="x", side="bottom", padx=12, pady=12)
@@ -368,15 +400,80 @@ class ApiManagementFrame(ttk.Frame):
             if not raw or raw.strip() == key_hint:
                 return None
             return raw.strip()
+        test_status = tk.StringVar(value="")
+        test_btn = ttk.Button(btn_frame, text=T("key_test_btn", lang))
+        test_btn.pack(side="left")
+        ttk.Label(btn_frame, textvariable=test_status, foreground="#666").pack(side="left", padx=(6, 0))
+
+        def _test():
+            plat = plat_map.get(plat_combo_var.get(), all_plat[0].key)
+            key = _clean_key(cred_var.get())
+            if not key and is_edit:
+                key = read_api_key_for_id(api_id)
+            if not key:
+                messagebox.showwarning(T("warn_title", lang), T("warn_no_key", lang), parent=top)
+                return
+            mode_for_test = api.get("mode", "payg") if is_edit else (
+                get_platform(plat).default_mode if get_platform(plat) else "payg")
+            proxy = self.app.config.get("http_proxy", "") if self.app.config.get("proxy_enabled") else ""
+            test_btn.configure(state="disabled")
+            test_status.set(T("key_test_running", lang))
+            result = {}
+
+            def _run():
+                from src.platforms.key_test import test_key
+                result["value"] = test_key(plat, mode_for_test, key, proxy)
+            threading.Thread(target=_run, daemon=True).start()
+
+            # Tk must be touched from the thread that owns it: the worker only
+            # fills `result`, and this poll runs on the UI thread.
+            def _poll():
+                if "value" not in result:
+                    try:
+                        top.after(100, _poll)
+                    except Exception:
+                        pass
+                    return
+                ok, detail = result["value"]
+                try:
+                    test_status.set(T("key_test_ok", lang, detail=detail) if ok
+                                    else T("key_test_fail", lang, error=detail))
+                    test_btn.configure(state="normal")
+                except Exception:
+                    pass
+            top.after(100, _poll)
+
+        test_btn.configure(command=_test)
         def _save():
             plat = plat_map.get(plat_combo_var.get(), all_plat[0].key)
             name = name_var.get().strip()
+            try:
+                alert_threshold = max(0.0, float(alert_var.get() or 0))
+                monthly_budget = max(0.0, float(budget_var.get() or 0))
+            except ValueError:
+                messagebox.showwarning(T("warn_title", lang), T("validate_number", lang), parent=top)
+                return
+            key = _clean_key(cred_var.get())
+            # A key belongs to one account: refuse a value already stored under
+            # another id instead of silently sharing the same provider account.
+            if key:
+                for other in get_apis():
+                    if other.get("id") == api_id:
+                        continue
+                    if read_api_key_for_id(other.get("id") or "") == key:
+                        messagebox.showwarning(
+                            T("warn_title", lang),
+                            T("key_duplicate", lang, name=other.get("name") or other.get("id")),
+                            parent=top)
+                        return
             if mode == "add":
-                key = _clean_key(cred_var.get())
                 if not key:
                     messagebox.showwarning(T("warn_title", lang), T("warn_no_key", lang), parent=top)
                     return
-                new_id = create_api(platform=plat, name=name, api_key=key, billing_period=billing_period_var.get())
+                new_id = create_api(platform=plat, name=name, api_key=key, billing_period=billing_period_var.get(),
+                                    alert_threshold=alert_threshold, monthly_budget=monthly_budget,
+                                    alert_enabled=alert_enabled_var.get(),
+                                    show_in_widget=widget_var.get())
                 # update app config
                 try:
                     self.app.config = load_config()
@@ -395,8 +492,10 @@ class ApiManagementFrame(ttk.Frame):
                 top.destroy()
             else:
                 # edit — only update key if user typed a new value (not hint text)
-                key = _clean_key(cred_var.get())
-                update_api(api_id, name=name, api_key=key, billing_period=billing_period_var.get())
+                update_api(api_id, name=name, api_key=key, billing_period=billing_period_var.get(),
+                           alert_threshold=alert_threshold, monthly_budget=monthly_budget,
+                           alert_enabled=alert_enabled_var.get(),
+                           show_in_widget=widget_var.get())
                 self.app.config = load_config()
                 if hasattr(self.app, "_rebuild_menu") and self.app.icon:
                     try:
@@ -407,7 +506,7 @@ class ApiManagementFrame(ttk.Frame):
                 try:
                     if hasattr(self.app, "_main_window") and self.app._main_window:
                         hist = self.app._main_window._tabs.get("history")
-                        if hist and hasattr(hist, "refresh_api_selector"):
+                        if hasattr(hist, "refresh_api_selector"):
                             hist.refresh_api_selector()
                 except Exception:
                     pass

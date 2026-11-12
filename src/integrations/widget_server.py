@@ -30,9 +30,9 @@ from src.platforms.registry import get_platform
 PORT = 18964
 
 # The payload format version the widget speaks; it refuses unknown majors.
-PAYLOAD_VERSION = 2
+PAYLOAD_VERSION = 3
 # Whose data this is, for the widget's diagnostics.
-PROVIDER = {"name": "deepseek-balance-monitor", "version": "2.0.3 Dev"}
+PROVIDER = {"name": "deepseek-balance-monitor", "version": "2.4.0"}
 
 # `days` only affects the balance curve; anything else is a seven-day one.
 DAYS = (1, 7, 30)
@@ -171,8 +171,11 @@ def _platform_status(platform: str, status: dict | None) -> str | None:
 
 def _platform_entry(app, api: dict, cache: dict, days: int) -> dict:
     platform = api.get("platform", "")
+    api_id = api.get("id") or ""
     entry = {
         "key": platform,
+        "account_id": api_id,
+        "account_name": api.get("name") or _display_name(platform),
         "display": _display_name(platform),
         "kind": api.get("mode", "payg"),
         "balances": [],
@@ -180,17 +183,26 @@ def _platform_entry(app, api: dict, cache: dict, days: int) -> dict:
         "windows": [],
         "series": [],
         "daily": [],
+        "today_spend": None,
     }
-    data = cache.get(api.get("id") or "", {})
+    data = cache.get(api_id, {})
 
     if entry["kind"] == "package":
-        entry["windows"] = _windows(api.get("id") or "", platform,
+        entry["windows"] = _windows(api_id, platform,
                                     data.get("package_data") or {})
-        entry["daily"] = _daily(api.get("id") or "")
+        entry["daily"] = _daily(api_id)
     else:
         entry["balances"] = _balance_entries(data.get("balances") or {})
-        entry["rate"] = _rate_entry(api.get("id") or "")
-        entry["series"] = _series(api.get("id") or "", days)
+        entry["rate"] = _rate_entry(api_id)
+        entry["series"] = _series(api_id, days)
+        spent = get_today_total_spend(api_id)
+        if spent:
+            entry["today_spend"] = {
+                "platform": platform,
+                "account_id": api_id,
+                "currency": spent[0],
+                "amount": spent[1],
+            }
 
     status = _platform_status(platform, data.get("service_status"))
     if status:
@@ -215,7 +227,8 @@ def build_payload(app, days: int = DEFAULT_DAYS) -> dict:
 
     apis = [
         api for api in (app.config.get("apis") or [])
-        if read_api_key_for_id(api.get("id") or "")
+        if api.get("show_in_widget", True)
+        and read_api_key_for_id(api.get("id") or "")
     ]
     platforms = [_platform_entry(app, api, cache, days) for api in apis]
 
@@ -235,6 +248,7 @@ def build_payload(app, days: int = DEFAULT_DAYS) -> dict:
         if spent:
             today_spend = {
                 "platform": preferred.get("platform", ""),
+                "account_id": preferred_id,
                 "currency": spent[0],
                 "amount": spent[1],
             }

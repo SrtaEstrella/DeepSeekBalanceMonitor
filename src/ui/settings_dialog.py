@@ -101,6 +101,18 @@ class SettingsFrame(ttk.Frame):
                         variable=api_alert_var).pack(side="left")
         ttk.Checkbutton(alert2_row, text=T("peak_valley_alert_label", lang),
                         variable=peak_valley_var).pack(side="left", padx=(16, 0))
+
+        # quiet hours — every notification is silent inside the window
+        quiet_row = ttk.Frame(scroll_frame); quiet_row.pack(fill="x", pady=(0, 8))
+        quiet_var = tk.BooleanVar(value=self.app.config.get("quiet_hours_enabled", False))
+        ttk.Checkbutton(quiet_row, text=T("quiet_hours_label", lang),
+                        variable=quiet_var).pack(side="left")
+        quiet_start_var = tk.IntVar(value=self.app.config.get("quiet_hours_start", 23))
+        quiet_end_var = tk.IntVar(value=self.app.config.get("quiet_hours_end", 7))
+        ttk.Spinbox(quiet_row, from_=0, to=23, textvariable=quiet_start_var, width=4).pack(side="left", padx=(6, 0))
+        ttk.Label(quiet_row, text="–").pack(side="left", padx=2)
+        ttk.Spinbox(quiet_row, from_=0, to=23, textvariable=quiet_end_var, width=4).pack(side="left")
+        ttk.Label(quiet_row, text=T("quiet_hours_hint", lang), foreground="#888").pack(side="left", padx=(6, 0))
         ttk.Separator(scroll_frame, orient="horizontal").pack(fill="x", pady=5)
 
         # theme — one line: 托盘图标主题：[combo] [ ]图标描边 ; preview + custom below
@@ -219,6 +231,32 @@ class SettingsFrame(ttk.Frame):
                  cursor="hand2").pack(side="left", padx=(12, 0), pady=(0, 2))
         ret_row.winfo_children()[-1].bind("<Button-1>", lambda e: _open_log())
 
+        # backup / restore — one folder per click, restored on the next start
+        backup_row = ttk.Frame(scroll_frame); backup_row.pack(fill="x", pady=(0, 8))
+        backup_status = tk.StringVar(value="")
+        def _do_backup():
+            try:
+                from src.core.backup import backup_now
+                target = backup_now()
+                backup_status.set(T("backup_done", lang, path=str(target)))
+            except Exception as e:
+                backup_status.set(T("backup_failed", lang, error=str(e)))
+        def _do_restore():
+            from src.core.paths import CONFIG_DIR
+            start = CONFIG_DIR / "backups"
+            chosen = filedialog.askdirectory(initialdir=str(start) if start.exists() else str(CONFIG_DIR))
+            if not chosen:
+                return
+            try:
+                from src.core.backup import request_restore
+                request_restore(chosen)
+                backup_status.set(T("restore_pending", lang))
+            except Exception as e:
+                backup_status.set(T("backup_failed", lang, error=str(e)))
+        ttk.Button(backup_row, text=T("backup_now", lang), command=_do_backup).pack(side="left")
+        ttk.Button(backup_row, text=T("restore_btn", lang), command=_do_restore).pack(side="left", padx=(6, 0))
+        ttk.Label(backup_row, textvariable=backup_status, foreground="#666").pack(side="left", padx=(8, 0))
+
         # export path — one line
         exp_row=ttk.Frame(scroll_frame); exp_row.pack(fill="x", pady=(0, 8))
         ttk.Label(exp_row, text=T("export_label", lang)).pack(side="left")
@@ -256,7 +294,7 @@ class SettingsFrame(ttk.Frame):
             lbl.bind("<Button-1>", lambda e: webbrowser.open(url))
             return lbl
         ver_row = ttk.Frame(scroll_frame); ver_row.pack(fill="x")
-        ttk.Label(ver_row, text="v2.0.3 Dev",
+        ttk.Label(ver_row, text="v2.4.0",
                   foreground="gray").pack(side="left")
         _make_link(ver_row, "GitHub",
                    "https://github.com/SrtaEstrella/DeepSeekBalanceMonitor").pack(side="left", padx=(10, 0))
@@ -317,6 +355,8 @@ class SettingsFrame(ttk.Frame):
                 interval=int(interval_var.get())
                 threshold=float(threshold_var.get())
                 retention=int(retention_var.get())
+                quiet_start=max(0, min(23, int(quiet_start_var.get())))
+                quiet_end=max(0, min(23, int(quiet_end_var.get())))
             except Exception:
                 return False
             if not (1<=interval<=1440): return False
@@ -351,6 +391,9 @@ class SettingsFrame(ttk.Frame):
             self.app.config["peak_valley_alert_enabled"]=peak_valley_var.get()
             self.app.config["rainmeter_enabled"]=rain_var.get()
             self.app.config["retention_days"]=retention
+            self.app.config["quiet_hours_enabled"]=quiet_var.get()
+            self.app.config["quiet_hours_start"]=quiet_start
+            self.app.config["quiet_hours_end"]=quiet_end
             self.app.config["export_path"]=export_var.get()
             self.app.config["proxy_enabled"]=proxy_enabled_var.get()
             proxy_val=proxy_var.get().strip()

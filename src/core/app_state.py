@@ -4,6 +4,7 @@ Application state - holds balances, config, timer, and helper methods.
 import os
 import sys
 import threading
+from datetime import datetime
 
 from src.core.config import load_config, T, log, APP_ID
 
@@ -34,6 +35,16 @@ class AppState:
         self._api_cache = {}  # {api_id: {"balances": {...}, "package_data": {...}, "service_status": {...}, "error": str}}
         self._poll_cb = None  # auto-poll entry callback, registered by the tray app
         self.checking = False  # a poll in flight (the widget payload's field)
+        # Per-account alert state (Rust v2.4 semantics): a line already
+        # reported stays reported until the reading comes back above it; a
+        # budget is reported once per calendar month; a failure episode is
+        # announced once, not on every retry.
+        self._account_alert_suppressed = set()
+        self._budget_alerted = {}
+        self._failure_alerted = set()
+        # api_id -> (retry_at, consecutive failures). A failing account is
+        # asked less often; a manual refresh clears the gates.
+        self._backoff = {}
 
     @property
     def lang(self):
@@ -45,11 +56,51 @@ class AppState:
         return None
 
     def balance_tooltip(self):
+        """Every account's own reading, one line each.
+
+        Two keys of one provider used to read the same here; naming the account
+        is what tells them apart (Rust v2.4's tray tooltip). The preferred
+        package line keeps the old refinement, and when nothing has been read
+        yet the original single-account wording is still what shows.
+        """
+        lines = []
+        with self._lock:
+            cache = {aid: dict(entry) for aid, entry in self._api_cache.items()}
+            preferred_id = self.config.get("preferred_api_id", "")
+        for api in self.config.get("apis") or []:
+            aid = api.get("id") or ""
+            entry = cache.get(aid) or {}
+            name = api.get("name") or api.get("platform") or aid
+            if api.get("mode", "payg") == "package":
+                pkg = entry.get("package_data") or {}
+                mp = pkg.get("monthly") or pkg.get("weekly") or pkg.get("5h") or pkg.get("rolling")
+                if not mp:
+                    continue
+                rm = mp.get("percent_remaining", 100 - mp.get("usage_percent", 0))
+                if aid == preferred_id:
+                    bp = api.get("billing_period") or "monthly"
+                    if bp in ("weekly", "monthly"):
+                        try:
+                            from src.core.storage import get_refined_remaining
+                            r = get_refined_remaining(aid, target=bp)
+                            if r is not None:
+                                rm = r
+                        except Exception:
+                            pass
+                lines.append(f"{name}: {rm:.1f}%")
+            else:
+                balances = entry.get("balances") or {}
+                code = "CNY" if "CNY" in balances else next(iter(balances), None)
+                bal = balances.get(code) if code else None
+                if bal:
+                    lines.append(f"{name}: {bal['total_balance']:,.2f} {code}")
+        if lines:
+            return "\n".join(lines)
+
+        # Nothing cached yet — keep the original single-account wording.
         with self._lock:
             pd = self.package_data
             if pd:
-                # package mode: show best available remaining % (refined
-                # fractional value for weekly/monthly when possible)
                 mp = pd.get("monthly") or pd.get("weekly") or pd.get("5h") or pd.get("rolling")
                 if mp:
                     rm = mp.get("percent_remaining", 100 - mp.get("usage_percent", 0))
@@ -75,6 +126,27 @@ class AppState:
                          code=b["currency"])
             return T("tooltip_checking", self.lang)
 
+    def _preferred_api(self):
+        pref_id = self.config.get("preferred_api_id", "")
+        return next((a for a in (self.config.get("apis") or [])
+                     if a.get("id") == pref_id), None)
+
+    def _preferred_line(self, default_key: str) -> float:
+        """The preferred account's own line, falling back to the global one.
+
+        An account-level line is an override, so a preferred account that sets
+        one no longer compares against the global threshold. Zero means the
+        account has no line of its own and the existing setting applies.
+        """
+        api = self._preferred_api() or {}
+        try:
+            own = float(api.get("alert_threshold") or 0.0)
+        except (TypeError, ValueError):
+            own = 0.0
+        if own > 0:
+            return own
+        return float(self.config.get(default_key, 0.0))
+
     def is_low_balance(self):
         with self._lock:
             # package mode: check remaining % using billing_period
@@ -83,13 +155,13 @@ class AppState:
                 mp = pd.get("monthly") or pd.get("weekly") or pd.get("5h") or pd.get("rolling")
                 if mp:
                     remaining_pct = mp.get("percent_remaining", 100 - mp.get("usage_percent", 0))
-                    threshold = float(self.config.get("threshold_package_percent", 10))
+                    threshold = self._preferred_line("threshold_package_percent")
                     return remaining_pct < threshold
             # payg mode: check total balance
             b = self.get_preferred_balance()
             if b is None:
                 return False
-            t = float(self.config.get("threshold_yuan", 1.0))
+            t = self._preferred_line("threshold_yuan")
             return b["total_balance"] < t
 
     def should_alert(self):
@@ -99,10 +171,16 @@ class AppState:
             if mode == "never":
                 self._alert_suppressed = False
                 return False
+            # The preferred account's own switch turns its notifications off
+            # without changing what the icon shows.
+            preferred = self._preferred_api()
+            if preferred is not None and not preferred.get("alert_enabled", True):
+                self._alert_suppressed = False
+                return False
             b = self.get_preferred_balance()
             if b is None:
                 return False
-            t = float(self.config.get("threshold_yuan", 1.0))
+            t = self._preferred_line("threshold_yuan")
             low = b["total_balance"] < t
             if not low:
                 self._alert_suppressed = False
@@ -113,6 +191,154 @@ class AppState:
                 return False
             self._alert_suppressed = True
             return True
+
+    def quiet_now(self, now=None) -> bool:
+        """Whether notifications are suppressed right now.
+
+        The window is in clock hours and may cross midnight (23 → 7). The
+        caller skips the whole judgement while this is true, so a pending
+        reading is not consumed and the state is judged again after the
+        window ends.
+        """
+        if not self.config.get("quiet_hours_enabled", False):
+            return False
+        from datetime import datetime
+        try:
+            start = int(self.config.get("quiet_hours_start", 23))
+            end = int(self.config.get("quiet_hours_end", 7))
+        except (TypeError, ValueError):
+            return False
+        if start == end:
+            return False
+        hour = (now or datetime.now()).hour
+        if start < end:
+            return start <= hour < end
+        return hour >= start or hour < end
+
+    def backoff_ready(self, api_id: str) -> bool:
+        with self._lock:
+            entry = self._backoff.get(api_id)
+            return entry is None or datetime.now() >= entry[0]
+
+    def record_fetch(self, api_id: str, ok: bool) -> int:
+        """Records one fetch result; returns the consecutive failure count.
+
+        A failing account is asked less often — the poll interval doubled per
+        failure, capped at an hour — so one broken key does not keep hammering
+        the provider on every cycle. A success clears the gate and the count.
+        """
+        from datetime import datetime, timedelta
+        with self._lock:
+            if ok:
+                self._backoff.pop(api_id, None)
+                self._failure_alerted.discard(api_id)
+                return 0
+            previous = self._backoff.get(api_id)
+            failures = (previous[1] if previous else 0) + 1
+            interval = max(1, int(self.config.get("interval_minutes", 10)))
+            seconds = min(3600, interval * 60 * (2 ** min(failures - 1, 6)))
+            self._backoff[api_id] = (datetime.now() + timedelta(seconds=seconds), failures)
+            return failures
+
+    def clear_backoff(self) -> None:
+        """A manual refresh clears the gates so the user can force a try."""
+        with self._lock:
+            self._backoff.clear()
+
+    def failure_alert_due(self, api_id: str, failures: int) -> bool:
+        if failures < 3:
+            return False
+        with self._lock:
+            if api_id in self._failure_alerted:
+                return False
+            self._failure_alerted.add(api_id)
+            return True
+
+    def account_alerts(self) -> list:
+        """Messages for the accounts other than the preferred one.
+
+        The preferred account keeps the existing global-line judgement; an
+        account of its own speaks only when it carries an `alert_threshold`
+        (balance amount or remaining percent) or a `monthly_budget`. Returns
+        `(title, message)` pairs, already translated.
+        """
+        from datetime import datetime
+        from src.core.storage import get_month_spend
+
+        apis = list(self.config.get("apis") or [])
+        preferred_id = self.config.get("preferred_api_id", "")
+        mode = self.config.get("alert_mode", "once")
+        with self._lock:
+            cache = {aid: dict(entry) for aid, entry in self._api_cache.items()}
+
+        messages = []
+        for api in apis:
+            aid = api.get("id") or ""
+            if not aid or aid == preferred_id:
+                continue
+            if not api.get("alert_enabled", True):
+                continue
+            name = api.get("name") or api.get("platform") or aid
+            data = cache.get(aid) or {}
+            kind = api.get("mode", "payg")
+
+            try:
+                line = float(api.get("alert_threshold") or 0.0)
+            except (TypeError, ValueError):
+                line = 0.0
+            if line > 0 and mode != "never":
+                low = False
+                title = body = ""
+                if kind == "package":
+                    pkg = data.get("package_data") or {}
+                    mp = pkg.get("monthly") or pkg.get("weekly") or pkg.get("5h") or pkg.get("rolling")
+                    if mp:
+                        remaining = mp.get("percent_remaining", 100 - mp.get("usage_percent", 0))
+                        if remaining < line:
+                            low = True
+                            title = T("quota_low_account_title", self.lang, name=name)
+                            body = T("quota_low_account_msg", self.lang,
+                                     remaining=f"{remaining:.1f}", threshold=f"{line:.1f}")
+                else:
+                    balances = data.get("balances") or {}
+                    code = "CNY" if "CNY" in balances else next(iter(balances), None)
+                    bal = balances.get(code) if code else None
+                    if bal and bal["total_balance"] < line:
+                        low = True
+                        title = T("low_bal_account_title", self.lang, name=name)
+                        body = T("low_bal_account_msg", self.lang,
+                                 balance=f"{bal['total_balance']:,.2f} {code}",
+                                 threshold=f"{line:,.2f} {code}")
+                if low:
+                    if mode == "always":
+                        messages.append((title, body))
+                    else:
+                        with self._lock:
+                            if aid not in self._account_alert_suppressed:
+                                self._account_alert_suppressed.add(aid)
+                                messages.append((title, body))
+                else:
+                    with self._lock:
+                        self._account_alert_suppressed.discard(aid)
+
+            try:
+                budget = float(api.get("monthly_budget") or 0.0)
+            except (TypeError, ValueError):
+                budget = 0.0
+            if budget > 0 and kind == "payg":
+                spent = get_month_spend(aid)
+                if spent and spent[1] >= budget:
+                    month = datetime.now().strftime("%Y-%m")
+                    with self._lock:
+                        if self._budget_alerted.get(aid) != month:
+                            self._budget_alerted[aid] = month
+                            messages.append((
+                                T("budget_alert_title", self.lang, name=name),
+                                T("budget_alert_msg", self.lang,
+                                  spent=f"{spent[1]:,.2f} {spent[0]}",
+                                  budget=f"{budget:,.2f} {spent[0]}"),
+                            ))
+        return messages
 
     def is_daily_spend_fast(self):
         """True when today's consumption crosses the configured daily-spend line.
@@ -146,6 +372,9 @@ class AppState:
     def should_spend_alert(self):
         """One-shot alert on entering the daily-spend-fast state."""
         if not self.config.get("daily_spend_alert_enabled", False):
+            return False
+        preferred = self._preferred_api()
+        if preferred is not None and not preferred.get("alert_enabled", True):
             return False
         if not self.is_daily_spend_fast():
             return False

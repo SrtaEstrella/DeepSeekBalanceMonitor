@@ -732,6 +732,79 @@ class ServiceStatusParsingTests(unittest.TestCase):
 
 
 
+class AccountFeatureTests(unittest.TestCase):
+    """Account-level alerts, quiet hours and retry gates (Rust v2.4)."""
+
+    def _app(self, apis, preferred=""):
+        app = AppState()
+        app.config = {**DEFAULT_CONFIG, "apis": apis,
+                      "preferred_api_id": preferred, "language": "zh"}
+        return app
+
+    def test_account_identity_reaches_the_widget_payload(self):
+        from src.integrations import widget_server
+        from unittest.mock import patch, Mock
+        app = self._app([
+            {"id": "a1", "platform": "deepseek", "mode": "payg",
+             "name": "Main", "show_in_widget": True},
+        ], preferred="a1")
+        with patch.object(widget_server, "read_api_key_for_id", Mock(return_value="key")), \
+             patch.object(widget_server, "get_today_total_spend", Mock(return_value=("CNY", 3.5))), \
+             patch.object(widget_server, "get_balance_series", Mock(return_value=[])), \
+             patch.object(widget_server, "get_consumption_rate", Mock(return_value=None)):
+            payload = widget_server.build_payload(app)
+        entry = payload["platforms"][0]
+        self.assertEqual(entry["account_id"], "a1")
+        self.assertEqual(entry["account_name"], "Main")
+        self.assertEqual(entry["today_spend"],
+                         {"platform": "deepseek", "account_id": "a1",
+                          "currency": "CNY", "amount": 3.5})
+
+    def test_an_account_can_be_hidden_from_the_widget(self):
+        from src.integrations import widget_server
+        from unittest.mock import patch, Mock
+        app = self._app([
+            {"id": "a1", "platform": "deepseek", "mode": "payg",
+             "show_in_widget": False},
+        ], preferred="a1")
+        with patch.object(widget_server, "read_api_key_for_id", Mock(return_value="key")):
+            payload = widget_server.build_payload(app)
+        self.assertEqual(payload["platforms"], [])
+
+    def test_an_account_line_alerts_once(self):
+        app = self._app([
+            {"id": "a1", "platform": "deepseek", "mode": "payg"},
+            {"id": "a2", "platform": "deepseek", "mode": "payg",
+             "name": "Work", "alert_threshold": 5, "alert_enabled": True},
+        ], preferred="a1")
+        app._api_cache = {"a2": {"balances": {"CNY": {
+            "total_balance": 3.0, "topped_up_balance": 3.0, "granted_balance": 0.0}}}}
+        messages = app.account_alerts()
+        self.assertEqual(len(messages), 1)
+        self.assertIn("Work", messages[0][0])
+        self.assertEqual(app.account_alerts(), [])
+
+    def test_quiet_hours_cross_midnight(self):
+        from datetime import datetime
+        app = self._app([])
+        app.config.update({"quiet_hours_enabled": True,
+                           "quiet_hours_start": 23, "quiet_hours_end": 7})
+        self.assertTrue(app.quiet_now(datetime(2026, 1, 1, 23, 30)))
+        self.assertTrue(app.quiet_now(datetime(2026, 1, 1, 3, 0)))
+        self.assertFalse(app.quiet_now(datetime(2026, 1, 1, 12, 0)))
+        app.config["quiet_hours_enabled"] = False
+        self.assertFalse(app.quiet_now(datetime(2026, 1, 1, 3, 0)))
+
+    def test_a_failing_account_is_asked_less_often(self):
+        app = self._app([], preferred="")
+        app.config["interval_minutes"] = 10
+        self.assertEqual(app.record_fetch("a1", False), 1)
+        self.assertFalse(app.backoff_ready("a1"))
+        app.clear_backoff()
+        self.assertTrue(app.backoff_ready("a1"))
+        self.assertEqual(app.record_fetch("a1", True), 0)
+
+
 class WidgetContractTests(unittest.TestCase):
     """The dsmon2-widget contract (docs/INTERFACES.md §1) as the Python build
     serves it: payload shape, `days` handling, and the HTTP surface."""
@@ -766,7 +839,7 @@ class WidgetContractTests(unittest.TestCase):
         from src.integrations import widget_server
         app = self._app()
         payload = widget_server.build_payload(app)
-        self.assertEqual(payload["version"], 2)
+        self.assertEqual(payload["version"], 3)
         self.assertEqual(payload["provider"]["name"], "deepseek-balance-monitor")
         self.assertEqual(payload["lang"], "zh")
         self.assertEqual(payload["platforms"], [])
@@ -823,7 +896,8 @@ class WidgetContractTests(unittest.TestCase):
         with stack:
             payload = widget_server.build_payload(app)
         self.assertEqual(payload["today_spend"],
-                         {"platform": "deepseek", "currency": "CNY", "amount": 12.5})
+                         {"platform": "deepseek", "account_id": "a1",
+                          "currency": "CNY", "amount": 12.5})
 
     def test_http_surface(self):
         import http.client
@@ -845,7 +919,7 @@ class WidgetContractTests(unittest.TestCase):
             self.assertEqual(response.getheader("Cache-Control"), "no-store")
             self.assertEqual(response.getheader("Connection"), "close")
             self.assertTrue(response.getheader("Content-Type").startswith("application/json"))
-            self.assertEqual(body["version"], 2)
+            self.assertEqual(body["version"], 3)
 
             # /check answers with the current snapshot too (no poll is
             # registered here, so it only reads).
