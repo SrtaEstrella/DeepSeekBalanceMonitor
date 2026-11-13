@@ -935,3 +935,45 @@ class WidgetContractTests(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+
+
+class BackupRestoreTests(unittest.TestCase):
+    """A restore that fails half way must not leave a mixed data directory."""
+
+    def test_a_failed_restore_puts_the_previous_files_back(self):
+        import src.core.backup as backup
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = root / "data"
+            data.mkdir()
+            source = root / "backup"
+            source.mkdir()
+            config = data / "config.json"
+            notes = data / "notes.txt"
+            config.write_text("old-config", encoding="utf-8")
+            notes.write_text("old-notes", encoding="utf-8")
+            (source / "config.json").write_text("new-config", encoding="utf-8")
+            (source / "notes.txt").write_text("new-notes", encoding="utf-8")
+
+            pending = root / ".restore-pending"
+            pending.write_text(json.dumps({"source": str(source)}), encoding="utf-8")
+
+            copy_file = backup._copy_file
+
+            def failing(source_file, target):
+                # The first swap goes through, the second one runs out of disk.
+                if Path(source_file) == source / "notes.txt":
+                    raise OSError("disk full")
+                copy_file(source_file, target)
+
+            with patch.object(backup, "CONFIG_DIR", root), \
+                 patch.object(backup, "PENDING", pending), \
+                 patch.object(backup, "_files", lambda: [config, notes]), \
+                 patch.object(backup, "_copy_file", failing), \
+                 patch.object(backup, "log", lambda *_a, **_k: None):
+                self.assertFalse(backup.apply_pending_restore())
+
+            self.assertEqual(config.read_text(encoding="utf-8"), "old-config",
+                             "a file already replaced must be put back")
+            self.assertEqual(notes.read_text(encoding="utf-8"), "old-notes")
+            self.assertFalse(pending.exists(), "the request is consumed either way")

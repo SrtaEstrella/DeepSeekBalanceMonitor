@@ -5,10 +5,16 @@ module takes the platform and the key as arguments instead of reading storage.
 It returns a short human-readable answer; the raw exception text is only used
 when the provider gave no summary of its own.
 """
+from src.platforms._http import install_proxy
 from src.platforms.registry import get_platform
 
 
 def _payg(platform: str, key: str, proxy: str) -> str:
+    # Install it up front, as every platform client does internally: the
+    # DeepSeek client has no proxy argument and uses whatever opener is
+    # installed, so without this the proxy this function is given would be
+    # ignored for exactly that platform.
+    install_proxy(proxy or "")
     if platform.startswith("kimi_"):
         from src.platforms.kimi import fetch_kimi_balance
         data = fetch_kimi_balance(key, platform_key=platform, http_proxy=proxy)
