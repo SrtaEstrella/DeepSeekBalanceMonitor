@@ -1,5 +1,8 @@
 # Python 版 Rainmeter 接口对接指南
 
+> **已停止维护。** Rainmeter 17654 接口不再开发、不再提供支持；Windows 桌面小工具请使用
+> Rust 2.x 的 `dsmon2-widget`（18964 契约）。以下内容仅作历史记录。
+
 本文档说明 Python Windows 版如何对接 `rainmeter-widget/DeepSeekBalanceMonitor`
 皮肤。目标是让 Python 版提供与 Rust Windows 版一致的本地 HTTP 状态接口，
 Rainmeter 只读取本地状态，不直接接触 API key。

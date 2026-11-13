@@ -1,5 +1,9 @@
 # DeepSeek Balance Monitor - Rust Windows Build
 
+> **No longer maintained.** The Rust 1.x build has been retired. For a Rust build use
+> Rust 2.x: <https://github.com/wenyinos/DeepSeekBalanceMonitor/releases/latest>.
+> The instructions below are kept for historical reference only.
+
 This is the Windows Rust port of the existing Python tray app. It targets:
 
 - Windows 7 SP1 / Windows Server 2008 R2 SP1 with all official updates

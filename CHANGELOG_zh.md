@@ -5,7 +5,7 @@
 ## Python v2.4.0 (2026-11-12)
 
 Python 版对齐 Rust 2.4 的账户化可用性特性，同时保留自己的模型：`apis[]`、首选账户、
-单打查询与 Rainmeter 17654 接口都保持原样。
+单打查询与 Rust 2.x 小工具的 18964 契约都保持原样。
 
 ### 新增
 
@@ -22,17 +22,19 @@ Python 版对齐 Rust 2.4 的账户化可用性特性，同时保留自己的模
   `backups/<时间戳>/`；恢复在下次启动时应用，被替换的文件保留为 `.before-restore-*`。
 - **小工具载荷 v3**：`platforms[]` 带 `account_id` 与 `account_name`，每个余额账户带自己的
   `today_spend`，`show_in_widget: false` 的账户不出现。Rust `dsmon2-widget` 可直接读取本版；
-  Rainmeter 17654 接口不变。
+  旧的 Rainmeter 17654 接口已停止维护。
 
 ### 变更
 
 - **版本号改为 2.4.0**，与 Rust 线对齐。
 - **托盘提示列出所有余额账户**与所有套餐的剩余比例，不再只显示首选。
+- **Rust 1.x（Windows/Linux）与 Rainmeter 不再维护。** Rust 版本请使用 Rust 2.x：
+  <https://github.com/wenyinos/DeepSeekBalanceMonitor/releases/latest>。
 
 ### 说明
 
-- 既有行为保持不变：`apis[]`/`api_id`、首选账户、并发/单打查询、全局阈值、单日消耗线
-  以及 Rainmeter 17654 载荷都未改动。
+- 既有行为保持不变：`apis[]`/`api_id`、首选账户、并发/单打查询、全局阈值、单日消耗线。
+  Rainmeter 17654 载荷已停止维护。
 
 ## Python v2.0.3 Dev (2026-10-02)
 
