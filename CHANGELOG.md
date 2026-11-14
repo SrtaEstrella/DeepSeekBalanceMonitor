@@ -6,7 +6,7 @@ All notable changes to DeepSeek Balance Monitor are documented here.
 
 The Python build catches up with the Rust 2.4 account-usability release while
 keeping its own model: `apis[]`, a preferred account, one-hot fetching and the
-Rainmeter 17654 interface stay exactly as they were.
+Rainmeter 17654 interface stay as they were.
 
 ### Added
 
@@ -32,19 +32,21 @@ Rainmeter 17654 interface stay exactly as they were.
 - **Widget payload v3**: `platforms[]` carries `account_id` and
   `account_name`, each balance account carries its own `today_spend`, and an
   account with `show_in_widget: false` is left out. Rust `dsmon2-widget` reads
-  this build directly; the Rainmeter interface on 17654 is unchanged.
+  this build directly. The old Rainmeter interface on 17654 is retired.
 
 ### Changed
 
 - **The version is 2.4.0**, aligned with the Rust line.
 - **The tray tooltip lists every balance account** and every plan's remaining
   share, not only the preferred one.
+- **Rust 1.x (Windows/Linux) and Rainmeter are no longer maintained.** Use
+  Rust 2.x for the Rust build: <https://github.com/wenyinos/DeepSeekBalanceMonitor/releases/latest>.
 
 ### Notes
 
 - Existing behaviour is kept: `apis[]`/`api_id`, the preferred account,
-  parallel/one-hot fetching, the global threshold, the daily-spend lines and
-  the Rainmeter 17654 payload are unchanged.
+  parallel/one-hot fetching, the global threshold and the daily-spend lines.
+  The Rainmeter 17654 payload is retired.
 
 ## Python v2.0.3 Dev (2026-10-02)
 

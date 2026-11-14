@@ -1,25 +1,29 @@
 # DeepSeek Balance Monitor
 
-A Windows tray app and Linux CLI/Plasma widget that periodically query the DeepSeek API for account balance and alert on low balance.
+A Windows tray app that periodically queries the DeepSeek API for account balance and alerts on low balance.
 
 [中文版](README_zh.md)
 
 ![preview](assets/preview.png)
 
-![Rainmeter preview](assets/preview_rainmeter.png)
+![Desktop widget preview](assets/preview_widget.png)
 
-Rainmeter widget preview
-
-[Linux Plasma widget preview](assets/preview_linux.png) (KDE Plasma 6 only)
+The desktop widget (Rust 2.x `dsmon2-widget`, 2.4.0+) reads this Python build over the local 18964 contract.
 
 [Mac WebView screenshots](assets/webview%20screenshots/) — menu bar, settings UI, history chart, light theme
+
+> **Version note**
+>
+> - The original Rust 1.x Windows and Linux builds (`rust-windows/`, `rust-linux/`, Plasma 6 widget) are **no longer maintained**; their download and build instructions have been withdrawn.
+> - For a Rust build, use **Rust 2.x**: <https://github.com/wenyinos/DeepSeekBalanceMonitor/releases/latest>
+> - The Rainmeter desktop widget is **no longer maintained**; use `dsmon2-widget` above for the Windows desktop widget.
 
 ---
 
 ## Current Version Highlights
 
 - Account usability (Python v2.4.0): an Overview page and a Subscriptions page; each account can carry its own alert line, monthly budget and alert switch; quiet hours silence every notification; a key can be tested before saving and is refused when another account already uses it; a failing account backs off exponentially and its failure episode is announced once; the settings page backs up and restores the data directory.
-- The widget contract is v3: `platforms[]` carries `account_id`, `account_name` and each account's own `today_spend`, and an account can be hidden from the panel. The Rainmeter interface on 17654 is unchanged, and the Rust `dsmon2-widget` can read this build directly.
+- The widget contract is v3: `platforms[]` carries `account_id`, `account_name` and each account's own `today_spend`, and an account can be hidden from the panel. The Rust 2.x `dsmon2-widget` reads this build directly.
 - DeepSeek service status is parsed from a dual source: the official status page `status.deepseek.com` first, falling back to FlashDuty's backend host; this also fixes a long-standing bug where an outage was never reported (the previous source was FlashDuty's own status page).
 - Balance and statistics semantics (Python v2.4.0): negative buckets clamp to 0 and the total is derived from the clamped buckets, so the granted balance is no longer cancelled by a negative top-up; the consumption rate and the estimated-hours figure read the total column and clamp the base at 0.
 - Hardening and performance (Python v2.4.0): the local status endpoint is no longer open to browsers, a second launch is refused, an unreadable config is backed up as `config.json.corrupt`, export paths expand `~`/`%VAR%`, quota percentages clamp to 0–100, and the main window no longer stalls on first open.
@@ -29,23 +33,9 @@ Rainmeter widget preview
 - Busy-hour consumption rate estimation (filters idle/flat periods) in balance notifications and the history viewer.
 - HTTP proxy support.
 - Balance detail notifications now use emoji-prefixed lines and relative last-check time.
-- Demo mode for testing without a real API key: developer tools panel on Py-Win/Py-Mac, `demo` API key trigger on Rust.
-- Encrypted API key storage: Fernet + SQLite on Py-Win, SQLite `secure_settings` on Rust, Keychain on Py-Mac.
-- Rainmeter desktop widget: local-only status interface; `.rmskin` release packaging. Supported on both Rust and Python Windows builds.
-- Rainmeter `/widget-status` now includes OpenCode Go quota fields (`og_*`), refreshed every 10 minutes in the background; interface contract documented with Python-port guidance.
-- OpenCode Go quota display (Rust builds): fetches the official OpenCode Go API (`opencode.ai/zen/go/v1/usage`, Bearer API key) for rolling (5h), weekly, and monthly usage; credentials stored encrypted in SQLite, never in config.json.
-- Command Code quota display (Rust builds): fetches `api.commandcode.ai` billing endpoints (Bearer API key) for 5h, weekly, and monthly usage; the monthly window is derived from the plan tier inferred from the rolling window caps (Go 10 / GOAT 70 / Pro 80 / Max 10× 150 / Max 20× 300 / Team Pro 40 credits); the Windows settings dialog and Plasma widget each gain a "Subscriptions" page showing OpenCode Go and Command Code quota side by side, with all API keys entered on the Account page. Linux CLI: `dsmon command-code` / `dsmon command-code set-key` / `dsmon command-code json`.
-- Rust builds use rustls with embedded webpki-roots: no OS certificate store is consulted, so the Windows build works out of the box on Windows 7/8.1 and supports TLS 1.3.
-
-Rust Linux-specific:
-- Rust Linux: `dsmon set-key` and `dsmon set <field> <value>`; daemon reloads config on each poll cycle; CLI stays English-only.
-- `dsmon opencode-go` prints OpenCode Go quota; `dsmon opencode-go set-key <api_key>` stores the API key encrypted; `dsmon opencode-go json` emits machine-readable output.
-- `dsmon command-code` prints Command Code quota; `dsmon command-code set-key <api_key>` stores the API key encrypted; `dsmon command-code json` emits machine-readable output.
-- The Plasma 6 widget settings are split by purpose: the Account page holds all API keys (DeepSeek, OpenCode Go, Command Code); a new Subscriptions page shows both OpenCode Go and Command Code quota bars; the General page is organised into Query / General / Proxy / Icon Appearance groups.
-- Plasma 6 widget main view: the DeepSeek balance is shown as a large number with last check, API status, and estimated availability in a four-line layout; the OpenCode and Command Code sections each show three usage progress bars (5h/Weekly/Monthly), all refreshed together from the top-right button.
-- Refreshing the Linux Plasma widget model: balance, relative last check, API service status, and estimated availability now match the Rainmeter widget layout.
-- Plasma widget language changes now sync `cfg_language` to `dsmon`'s `ui_language`, persisting the Chinese/English selection across Plasma restarts.
-- Linux releases now provide both a complete `.tar.gz` package and a standalone `.plasmoid` widget package for direct download.
+- Demo mode for testing without a real API key: developer tools panel on Py-Win/Py-Mac.
+- Encrypted API key storage: Fernet + SQLite on Py-Win, Keychain on Py-Mac.
+- OpenCode Go / Command Code / GLM / MiniMax quota: add the platform on the Manage page; the dashboard and subscriptions page show 5h / weekly / monthly usage.
 
 ## Features
 
@@ -54,10 +44,10 @@ Rust Linux-specific:
 - **Balance details** — Left-click the icon to see balance (emoji-prefixed), consumption rate, API service status, and relative last-check time.
 - **History viewer** — Paginated table of all balance records with interactive trend chart and consumption rate analysis. CSV export.
 - **Settings** — API key (Fernet + SQLite encrypted storage), check interval, alert threshold, alert mode, icon theme, proxy, and more.
-- **OpenCode Go & Command Code quota** (Rust builds) — A "Subscriptions" settings page (Windows) or `dsmon opencode-go` / `dsmon command-code` (Linux) shows rolling 5h/weekly/monthly usage from the opencode.ai and commandcode.ai dashboards, with encrypted credential storage.
+- **OpenCode Go / Command Code / GLM / MiniMax quota** — Add the platform on the Manage page; the dashboard and subscriptions page show 5h/weekly/monthly usage, with encrypted credential storage.
 - **Demo mode** — `--demo` flag for testing without an API key, with a developer tools panel.
-- **Optional desktop widgets** — KDE Plasma 6 on Linux, and Rainmeter on Windows (Rust and Python builds both supported).
-- **Community ports** — Rust-Win (Win7+), Rust-Linux (CLI + Plasma 6 widget), Py-Mac (Keychain-secured, WebView settings UI).
+- **Desktop widget** — Windows uses the Rust 2.x `dsmon2-widget` (see the version note above); Rainmeter is no longer maintained.
+- **Community ports** — Py-Mac (Keychain-secured, WebView settings UI).
 
 ### Notification Previews
 
@@ -79,63 +69,24 @@ Rust Linux-specific:
 
 ### Direct Download
 
-Grab the latest files from [Releases](https://github.com/SrtaEstrella/DeepSeekBalanceMonitor/releases). Python builds use `DeepSeekBalanceMonitor.exe`, Rust Windows builds use `deepseek-balance-monitor-*-windows-*.exe`, full Linux packages use `deepseek-balance-monitor-*-linux-x86_64.tar.gz`, and standalone Plasma widgets use `deepseek-balance-monitor-*-plasmoid.plasmoid`. Release builds do not require Python.
+Grab the latest files from [Releases](https://github.com/SrtaEstrella/DeepSeekBalanceMonitor/releases). Python builds use `DeepSeekBalanceMonitor.exe`. Release builds do not require Python.
 
-### Optional Plasma Widget (Linux)
-
-The Plasma widget is optional and requires KDE Plasma 6. It reads status from a local `dsmon` instance and does not directly receive your API key.
-
-1. Download `deepseek-balance-monitor-*-linux-x86_64.tar.gz` from [Releases](https://github.com/SrtaEstrella/DeepSeekBalanceMonitor/releases).
-2. Extract and run the install script:
-
-   ```bash
-   tar -xzf deepseek-balance-monitor-*-linux-x86_64.tar.gz
-   cd deepseek-balance-monitor-*-linux-x86_64
-   sudo ./install.sh
-   ```
-
-   The installer auto-enables and starts the daemon (`systemctl --user enable --now dsmon.service`).
-
-3. Add **DeepSeek Balance Monitor** from the Plasma widget chooser.
-4. Open the widget settings, enter your DeepSeek API key (or use `dsmon set-key`), then click **Save**.
-5. Click **Check** in the widget to manually refresh the balance.
-
-If you only need the widget, download `deepseek-balance-monitor-*-plasmoid.plasmoid` and install it with the Plasma widget installer. The full Linux tarball also contains the same widget under `plasmoid/`.
+For a Rust build (Windows / Linux), use **Rust 2.x**: <https://github.com/wenyinos/DeepSeekBalanceMonitor/releases/latest>.
 
 ### Desktop Widget (Windows)
 
-The Python build serves the widget contract on `127.0.0.1:18964` (version 3). The Windows desktop widget is a separate program: download `deepseek-balance-monitor-widget-2.4.0-windows-x64.msi` (or the `arm64` package) from <https://github.com/wenyinos/DeepSeekBalanceMonitor/releases/latest>, install it and start `dsmon2-widget`; it reads this build directly.
+The Python build serves the widget contract on `127.0.0.1:18964` (version 3). The Windows desktop widget is a separate program: download `deepseek-balance-monitor-widget-2.4.1-windows-x64.msi` (or the `arm64` package) from <https://github.com/wenyinos/DeepSeekBalanceMonitor/releases/latest>, install it and start `dsmon2-widget`; it reads this build directly.
 
-**Compatibility:** only the 2.4.0 widget speaks contract v3. The older Rust widget (2.3 and earlier) speaks v2 and refuses a v3 payload, so it cannot be paired with this Python build. The Rainmeter interface on 17654 below is a separate, unchanged contract.
-
-### Optional Rainmeter Widget (Windows)
-
-The Rainmeter desktop widget is optional. It reads local status from a running DeepSeek Balance Monitor process (`127.0.0.1:17654`); it does not store or receive your API key. Supported on both Rust and Python Windows builds. The `/widget-status` response includes DeepSeek balance, service status, consumption rate and — on the Rust Windows build — OpenCode Go quota fields (`og_configured`, `og_error`, and `og_rolling|weekly|monthly_percent`/`_line`), refreshed every 10 minutes in the background.
-
-1. Install Rainmeter from [rainmeter.net](https://www.rainmeter.net/).
-2. Run any Windows build (Python or Rust) — the local status interface starts automatically.
-3. Download `deepseek-balance-monitor-*-rainmeter.rmskin` from [Releases](https://github.com/SrtaEstrella/DeepSeekBalanceMonitor/releases).
-4. Double-click the `.rmskin` file and install the skin.
-5. In Rainmeter, load `DeepSeekBalanceMonitor\DeepSeekBalanceMonitor.ini` (or `DeepSeekBalanceMonitor.en.ini` for English).
-
-**High-DPI screens:** set `Rainmeter.exe` → Properties → Compatibility → Change high DPI settings → check "Override high DPI scaling behavior" and select "Application". Then load the 2x-scaled `DeepSeekBalanceMonitor.hd.ini` (or `.en.hd.ini`).
+**Compatibility:** only the 2.4.0 widget (and later) speaks contract v3. The older Rust widget (2.3 and earlier) speaks v2 and refuses a v3 payload, so it cannot be paired with this Python build.
 
 ### Requirements
 
 Direct downloads (`.exe`, `.tar.gz`, `.dmg`) require no additional runtimes.
 
 - Py-Win: Windows 10+
-- Rust-Win: Windows 7 SP1+ (all official updates), 8.1, 10, or 11
-- Rust-Linux: RHEL 8 / Ubuntu 20.04 era glibc or newer; KDE Plasma 6.0+ for the widget
 - Py-Mac: MacOS 10.14+
 
-Building from source additionally requires Python 3.10+ (Py-Win, Py-Mac) or Rust 1.77.2 (Rust-Win, Rust-Linux).
-
-### TLS Certificates
-
-Both Rust builds use rustls with embedded webpki-roots: the Mozilla root store is compiled into the binary and no operating system certificate store is consulted. The Windows build therefore works on Windows 7/8.1 with stale trust stores out of the box (TLS 1.3 included), and the former `update_windows_root_certs.bat` helper script has been removed as unnecessary — Py-Win requires Windows 10+ anyway.
-
-Note that TLS inspection by a corporate proxy or security software will fail certificate validation, because only the embedded root store is trusted.
+Building from source additionally requires Python 3.10+ (Py-Win, Py-Mac).
 
 ### Run from Source (Python)
 
@@ -157,48 +108,6 @@ scripts\build_exe.bat
 
 Builds `dist\DeepSeekBalanceMonitor.exe`. GitHub Actions auto-builds and attaches the EXE to each release.
 
-**Rust Windows (`rust-windows/`):**
-
-```powershell
-cd rust-windows
-rustup toolchain install 1.77.2-x86_64-pc-windows-msvc
-cargo +1.77.2 build --release --target x86_64-pc-windows-msvc --locked
-```
-
-**Rust Linux (`rust-linux/`):**
-
-```bash
-cd rust-linux
-cargo +1.77.2 build --release --locked
-```
-
-Linux release tarballs install the `dsmon` binary and systemd user service at system level (`/usr/local/bin/dsmon`, `/etc/systemd/user/dsmon.service`) with sudo, and the Plasma widget plus its icon under your user directory (`~/.local/share/`) so widget updates never need sudo:
-
-```bash
-tar -xzf deepseek-balance-monitor-*-linux-x86_64.tar.gz
-cd deepseek-balance-monitor-*-linux-x86_64
-sudo ./install.sh
-```
-
-On systemd systems the installer runs `systemctl --user enable --now dsmon.service` (for the sudo user) so the daemon auto-starts on login and runs immediately; on non-systemd systems it writes a desktop autostart entry instead.
-
-The CLI is currently available only in the Rust Linux build. Windows and MacOS builds use GUI/tray controls.
-
-Useful Linux CLI commands:
-
-| Command | Purpose |
-|---|---|
-| `dsmon init-config` | Create the default config file if it does not exist |
-| `dsmon set-key` | Read an API key from stdin and store it encrypted in SQLite; enter `demo` to enable demo mode |
-| `dsmon set <field> <value>` | Update one config field, such as `interval`, `threshold`, `ui-language`, `http-proxy`, `theme`, or `color-ok` |
-| `dsmon check` | Run one balance check and print the result in English |
-| `dsmon daemon` | Run the polling loop used by the user systemd service |
-| `dsmon history [days]` | Print a balance history summary |
-| `dsmon history export [days] [currency\|all] [path\|-]` | Export history as CSV; `-` writes CSV to stdout |
-| `dsmon widget-status` | Print JSON status consumed by the Plasma widget |
-| `dsmon opencode-go` | Print OpenCode Go quota (5h/weekly/monthly usage); store the API key with `dsmon opencode-go set-key <api_key>` (or pipe it via stdin; get a key at https://opencode.ai/auth) |
-| `dsmon command-code` | Print Command Code quota (5h/weekly/monthly usage); store the API key with `dsmon command-code set-key <api_key>` (or pipe it via stdin; get a key at https://commandcode.ai) |
-
 **MacOS (`src/mac/`):**
 
 ```bash
@@ -207,15 +116,15 @@ pip install -r requirements.txt
 bash ../scripts/build_mac.sh
 ```
 
-### Python vs Rust
+### Python builds
 
-| | Python Windows | Rust Windows | Rust Linux | Python MacOS |
-|---|---|---|---|---|
-| Runtime | Python + pystray + Tkinter | Native Rust + native-windows-gui | Native Rust CLI | Python + rumps + webview |
-| Min OS | Windows 10+ | Windows 7 SP1+ | RHEL 8 / Ubuntu 20.04 era glibc | MacOS 10.14+ |
-| First launch (no key) | Opens settings dialog | Opens settings dialog | Installer/check prompts for `dsmon set-key` | Opens settings window |
-| Auto-start | Registry Run key | Startup folder shortcut | systemd user service | Login items |
-| API key storage | Fernet + SQLite | SQLite `secure_settings` encrypted with Windows DPAPI | SQLite `secure_settings` encrypted locally | MacOS Keychain |
+| | Python Windows | Python MacOS |
+|---|---|---|
+| Runtime | Python + pystray + Tkinter | Python + rumps + webview |
+| Min OS | Windows 10+ | MacOS 10.14+ |
+| First launch (no key) | Opens settings dialog | Opens settings window |
+| Auto-start | Registry Run key | Login items |
+| API key storage | Fernet + SQLite | MacOS Keychain |
 
 ## Project Structure
 
@@ -247,15 +156,6 @@ DeepSeekBalance/
 │   ├── AppIcon.icns / .png
 │   ├── preview.png / preview_zh.png
 │   └── font/
-├── rainmeter-widget/           # Rainmeter desktop skin source
-├── rust-windows/               # Native Rust Windows port
-│   ├── src/main.rs
-│   ├── app.manifest
-│   └── build.rs
-├── rust-linux/                # Rust Linux CLI and Plasma 6 widget
-│   ├── src/main.rs
-│   ├── package/
-│   └── plasmoid/
 ├── main.py
 ├── requirements.txt
 └── README.md
@@ -280,13 +180,11 @@ Windows builds store settings in `%APPDATA%\DeepSeek Balance Monitor\config.json
 }
 ```
 
-API keys are never written to this file. Python Windows uses Fernet + SQLite encryption, Python MacOS uses Keychain, and Rust Windows/Linux store encrypted keys in SQLite `secure_settings`.
-
-Linux `dsmon` stores settings in `~/.config/deepseek-balance-monitor/config.json` and logs in `~/.local/state/deepseek-balance-monitor/app.log`.
+API keys are never written to this file. Python Windows uses Fernet + SQLite encryption, Python MacOS uses Keychain.
 
 Windows logs are written to `%APPDATA%\DeepSeek Balance Monitor\app.log`.
 
-Rust Windows and Rust Linux store encrypted settings and balance history in `balance_history.db` next to their app data. History uses the same `retention_days` setting as log cleanup. The Windows settings dialog and Plasma widget settings include a History page with days/currency filters, trend summary, chart, and CSV export. Linux CLI output stays English-only and `dsmon history` prints text statistics instead of raw rows.
+Balance history is stored in a local SQLite database and uses the same `retention_days` setting as log cleanup. The History page supports days/currency filters, trend summary, chart, and CSV export.
 
 ## Tray Menu
 

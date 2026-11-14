@@ -1,5 +1,9 @@
 # Code Signing & Verification Guide
 
+> **维护范围：** 原 Rust 1.x 的 Windows/Linux 构建与 Rainmeter 小组件已停止维护，本文档中的
+> Rust 1.x 章节仅作历史参考。需要 Rust 版本请使用 **Rust 2.x**：
+> <https://github.com/wenyinos/DeepSeekBalanceMonitor/releases/latest>。
+
 本文档面向 fork 开发者，说明如何为本项目的可执行文件配置代码签名和验证。
 
 ## 先理解 SmartScreen
